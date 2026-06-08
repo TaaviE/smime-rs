@@ -1,0 +1,11 @@
+[submodule "pkg"]
+	path = pkg
+	url = git@github.com:zone-eu/smime.git
+	branch = main
+[submodule "pkg-node"]
+	path = pkg-node
+	url = git@github.com:zone-eu/smime-js.git
+	branch = master
+[submodule "vendor/pyca-cryptography"]
+	path = vendor/pyca-cryptography
+	url = git@github.com:TaaviE/pyca-cryptography.git

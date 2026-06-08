@@ -1,0 +1,18 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test ECDH P-384
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIIBlwYJKoZIhvcNAQcDoIIBiDCCAYQCAQIxggEPoYIBCwIBA6BxoW8wCQYHKoZIzj0CAQNiAASM
+p8+IyMK+AIrMy0xWtHiQxzRabrKZrTnWd3pkW2VsxOC+5ANtj70qU7kalTOfRyacYJh0MrXTMfbJ
+f6y/8zimATL1vEGnJdOzvu+L75nZ0k9fhe3TMLMbHb/ETYQUlX4wGAYJK4EFEIZIPwACMAsGCWCG
+SAFlAwQBLTB5MHcwSzAzMRcwFQYDVQQKDA5ab25lIE1lZGlhIE/DnDEYMBYGA1UEAwwPS2FsbGUg
+S3LDvHB0aWphAhQ7A/E4gK1J0HN0o84VRPa9N/np6AQoUId8uRbIfpvVTwpsufe6QVFJZ5KpYKH/
+QI5OH2UrFoXLmCA+UsjbBTBsBgkqhkiG9w0BBwEwHQYJYIZIAWUDBAEqBBARLJe1HFcSguiUO5IA
+BOBNgEBdgYzXxJ2PLaRwyMPU3B+EMoTe/pKFsJ87+rqApjAXe+i5ec82F7kHKkhQCMM3K7XcSf68
+LYLZzDp7EJ2IE4/9

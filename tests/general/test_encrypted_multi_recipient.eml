@@ -1,0 +1,23 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test Multi-Recipient RSA+EC
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIIC3QYJKoZIhvcNAQcDoIICzjCCAsoCAQIxggJVMIIBYwIBADBLMDMxFzAVBgNVBAoMDlpvbmUg
+TWVkaWEgT8OcMRgwFgYDVQQDDA9LYWxsZSBLcsO8cHRpamECFDO4+PrspGFEXLelnohpOnX/etaN
+MA0GCSqGSIb3DQEBAQUABIIBAFFDuXrxv+d1+Azo6dy73iN4DNKAQyZquUknYCh4KY0MO8Zg0OiR
+LSq1MWBzRWF4QWZlpQqL//OKXNE9VkBKESXyolAQJK1Poe3PWHmhBGSs+ypgCe5ucrR+YYMPgUOR
+F9LfF/mGDKLyjC+9c4mWGihIRdL65EKHRvmh3u5lnaWXIcQwMuhSU071bG9qk1MEUK6S2n9kC/dz
+2LxRuVbF14r2ZSCi+zUekzar3w2bQvrBA6MqCrgKY+OE4N5Or/8K2W1jG+jl7HwDropkwDe6QUfl
+bktejEH6zzPXfOtcoyrFa8tpNheLXi80VqVw3cpQqdIg5uDsKrrW4+3WHYv0Oc2hgesCAQOgUaFP
+MAkGByqGSM49AgEDQgAEQS599CO/S9UvOrKndXZDB+y2ePtCzb+ApyN1TkKngnHSz7xzI3y1zxIb
+EKDngY61eXtPlPS7tnsJTP4P+H2yWjAYBgkrgQUQhkg/AAIwCwYJYIZIAWUDBAEtMHkwdzBLMDMx
+FzAVBgNVBAoMDlpvbmUgTWVkaWEgT8OcMRgwFgYDVQQDDA9LYWxsZSBLcsO8cHRpamECFE28w8oY
+F7fixuz9mPASsDAJpwteBCjKJaEcbKXMTPacy+NORQ+yHSyvZ39e4lzs7ETLb2qviy57BFCYhqUh
+MGwGCSqGSIb3DQEHATAdBglghkgBZQMEASoEEEwC8NN/KnBUUwxBx59KGByAQDNSdrIdWboJJyUb
+Z1lRDKi3rkKm9XnZ7xq43lpp181UqzjvgK44ePlgHXTwnoFplzyhdu1QtPRGJMGz5eGFxEk=

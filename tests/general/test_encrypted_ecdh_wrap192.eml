@@ -1,0 +1,17 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test ECDH AES-192-WRAP
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIIBdQYJKoZIhvcNAQcDoIIBZjCCAWICAQIxge6hgesCAQOgUaFPMAkGByqGSM49AgEDQgAEGd6x
+sRQB0wTV4+WyNw2MjYVDIK5bXenvvAndqw4jFwnFyTgoL8w/rqMoXkH4sXcgrXRnubvm0e3jsP/K
+gUY12TAYBgkrgQUQhkg/AAIwCwYJYIZIAWUDBAEZMHkwdzBLMDMxFzAVBgNVBAoMDlpvbmUgTWVk
+aWEgT8OcMRgwFgYDVQQDDA9LYWxsZSBLcsO8cHRpamECFE28w8oYF7fixuz9mPASsDAJpwteBCgy
+VoW7h1+rKuOqnpp7PU1eiBEPegMTKVMvuBh6RAy8FksG0HUIwUokMGwGCSqGSIb3DQEHATAdBglg
+hkgBZQMEASoEEKarAH1Rj+hIAQ0jb5nWSQiAQDqloKbkzP25yWrwvZFGbbwpeLT9MPM1t6kN86jZ
+DP7tVFsoSUbhbk1+KRNtNsMf/zQkwcdHF3dvis9iq8YJ8nM=

@@ -1,0 +1,20 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test AES-128 OAEP
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIICGgYJKoZIhvcNAQcDoIICCzCCAgcCAQAxggGSMIIBjgIBADBLMDMxFzAVBgNVBAoMDlpvbmUg
+TWVkaWEgT8OcMRgwFgYDVQQDDA9LYWxsZSBLcsO8cHRpamECFDO4+PrspGFEXLelnohpOnX/etaN
+MDgGCSqGSIb3DQEBBzAroA0wCwYJYIZIAWUDBAIBoRowGAYJKoZIhvcNAQEIMAsGCWCGSAFlAwQC
+AQSCAQBlHq4JSVU6VFzWsDoOByaiT3mEI/pUry+RUqG4qgB8PLbu8q+ENLrHUK/oDo7y5XLm9GSF
+zwcJ+XbEylqAZHZFGGIQtdon7VEqK1fQHcTcX2DXnuMXTVOToYauaehPXqr4uWCM/S7XHtHApWk1
+87h5ARs6BqBmD7+g2r+brDCX3ufmjlI6Lpcvqs49XnT+3k8/e0TAa1tJAcQjyDs7IrOIjGWtG0O6
+6RT2/+shIBIswWrnA1f4xx01Dew6Ii16j3uY1u9r71D0JxSq3jIBegJPNUUFmaCTb3KLRpavrjGl
+sJp3yP+8IyB6Vy6UX72EM+Z6/mrWeIW3g9Y+ekGE60MXMGwGCSqGSIb3DQEHATAdBglghkgBZQME
+AQIEEMxC2Mq8go56/ccEHra2V2SAQMPtiB38zOx2yBB49YmsaxojaRmVj+Yh08RTkti9bQk077wD
+Auf4yIQ3ChNANSXEtmBBSH+MBT5xujCD7hzBPVU=

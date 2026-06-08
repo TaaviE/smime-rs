@@ -1,0 +1,51 @@
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="c39"
+Subject: no-crypto-complex
+Message-ID: <no-crypto-complex@lhp.example>
+From: Alice <alice@smime.example>
+To: Bob <bob@smime.example>
+Date: Sat, 20 Feb 2021 12:00:02 -0500
+User-Agent: Sample MUA Version 1.0
+
+--c39
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="05a"
+
+--05a
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+This is the no-crypto-complex message.
+
+This message uses no cryptographic protection at all.  Its body
+is a multipart/alternative message with an inline image/png
+attachment.
+
+-- 
+Alice
+alice@smime.example
+--05a
+Content-Type: text/html; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+<html><head><title></title></head><body>
+<p>This is the <b>no-crypto-complex</b> message.</p>
+<p>This message uses no cryptographic protection at all.  Its body
+is a multipart/alternative message with an inline image/png
+attachment.</p>
+<p><tt>-- <br/>Alice<br/>alice@smime.example</tt></p></body></html>
+--05a--
+
+--c39
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+Content-Disposition: inline
+
+iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAcElEQVR42uVTOxbA
+MAgS739nO3TpRw20dqpbfARQEjOywiwYnCtkDKnbcLk66sqlT+zt9cidkE+6KwkZ
+sgrzfcqVMpL2jo0447gYDpeArk+OnJHkIhAfTPRicihAf5YJrw7vjv0ZWRWM/uli
+vdPf1QZ2kDD9xppd8wAAAABJRU5ErkJggg==
+
+--c39--

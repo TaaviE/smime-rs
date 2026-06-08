@@ -1,0 +1,20 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test AES-192 OAEP
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIICGgYJKoZIhvcNAQcDoIICCzCCAgcCAQAxggGSMIIBjgIBADBLMDMxFzAVBgNVBAoMDlpvbmUg
+TWVkaWEgT8OcMRgwFgYDVQQDDA9LYWxsZSBLcsO8cHRpamECFDO4+PrspGFEXLelnohpOnX/etaN
+MDgGCSqGSIb3DQEBBzAroA0wCwYJYIZIAWUDBAIBoRowGAYJKoZIhvcNAQEIMAsGCWCGSAFlAwQC
+AQSCAQBrYDilRgozEvPZ6EZpUfC3qY32RtMhj5bDuvGh3aNU/dAAjQVYHwxp8HaUyBRSvUX7m85R
+YpjzFFbaVSRH/N9Oykx5XKgOGKPrc9QzJpgpbDWLUqUm46kVO722K3OF+tx5VbLLcXqo3GAp0jdd
+jr3/+Dp1R3duRzpIaTeka1+j7SdW+godGSGA1gR/oRyPjPndWcYz/CUP1FrzL2E11T8eRP7odudy
+CWuKNUvqGvGyqtD6oWtGQMSn6KQueY/3doUqNYtFcVo+oKFHMBKyOmKkroOqQ/KFAKjyiiM/YjOI
+VRvGP4HxqN5/yARgHEYkvUYQmRtkS4peO3xSAiAEYqHRMGwGCSqGSIb3DQEHATAdBglghkgBZQME
+ARYEEEMx4kAJ3lwGS5S0FRoOyEyAQAo47XDXbRWOUoogwCF5nfMiuhTAq10sEmjr9JEKrnUzpBtD
+KwS1Ow5jO7oHcQNmkuZcHUi3kzOuhmg6UF2r8HE=

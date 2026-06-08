@@ -1,0 +1,19 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test AES-192-CBC RSA PKCS1
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIIB7wYJKoZIhvcNAQcDoIIB4DCCAdwCAQAxggFnMIIBYwIBADBLMDMxFzAVBgNVBAoMDlpvbmUg
+TWVkaWEgT8OcMRgwFgYDVQQDDA9LYWxsZSBLcsO8cHRpamECFDO4+PrspGFEXLelnohpOnX/etaN
+MA0GCSqGSIb3DQEBAQUABIIBAFnzwNCARl1HpKVS+PLRJDvaYl1hK9WiWWDcaiHBF7v6QDHce5Mn
+A7BK2l0SYGHmfolnXuhrgevWB6oBVo+mQFP5pJvzkW06KbOSSxbFYzIgy8QxCBofHxS64syNrBWX
+LjWiCiaOfVgU1MrLqmQHJAaGPK2L9w5UUKKcW/teKT1mVSFpAJdtnY3T5mYSs6MNerPxhTf/6sGi
+mqM3jUuS7EzM/ttXvocm50f5vARoRMwg7F/flB65P6J1b7wFqEQnUoTFNODKGKCyyVD1gyPM5tkT
+in3drAi63m/iR1YCYZbsvrIX/tiWJMd2tZie+DkOJaJrMNFle6RW56FzI3P0oX0wbAYJKoZIhvcN
+AQcBMB0GCWCGSAFlAwQBFgQQVtnBJ1ME4u7wkeDFqOfY6IBAWWdWPtrWyk/zey1gJMawgemzndfP
+RpBA4/RM9QvmnE8E+ue5msPejnOV0XumbzFApS7KXR4IkFLE/RTi8p7gCA==

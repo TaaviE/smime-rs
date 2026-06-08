@@ -1,0 +1,15 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test X25519 x25519_hkdf384
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIHrBgkqhkiG9w0BBwOggd0wgdoCAQIxgYahgYMCAQOgLKEqMAUGAytlbgMhAByf2I9FYG2TKoDH
+GCSuFR0V1z533jjo4ACFLmFPrnAZMBoGCyqGSIb3DQEJEAMUMAsGCWCGSAFlAwQBBTA0MDKgFgQU
+zUvjAOuGjsuWRdcARfZoBD0YJfcEGOUIc4cl95jV964mOuFj86S10SSzCqdFvTBMBgkqhkiG9w0B
+BwEwHQYJYIZIAWUDBAECBBABAgMEBQYHCAkKCwwNDg8QgCDZsHod+voUuNhsbDKt1hdx8luZgIfd
+8AEjF8gxNgvueA==

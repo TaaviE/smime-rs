@@ -1,0 +1,14 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test KEKRI
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIHIBgkqhkiG9w0BBwOggbowgbcCAQIxRKJCAgEEMAYEBAECAwQwCwYJYIZIAWUDBAEtBCiUkfPi
+tRO12j8MpwvI8nuuw2jvVJRdV/0Vp46ga5mrhr2+ODtZ/mgvMGwGCSqGSIb3DQEHATAdBglghkgB
+ZQMEASoEEANzc3IEaoOuAJxmtPK+t6iAQLFBODiXgEAUuL46TAoVs0i5e5jdtmdp+47EZ6GCdCuz
+6I++9wjB9O15R/g4uE8/yPMkOOQi3t+HQDxRNDjUgk0=

@@ -1,0 +1,20 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test AES-192-GCM
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=authEnveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIICAAYLKoZIhvcNAQkQARegggHvMIIB6wIBADGCAWcwggFjAgEAMEswMzEXMBUGA1UECgwOWm9u
+ZSBNZWRpYSBPw5wxGDAWBgNVBAMMD0thbGxlIEtyw7xwdGlqYQIUM7j4+uykYURct6WeiGk6df96
+1o0wDQYJKoZIhvcNAQEBBQAEggEAXqtPTbIy8QONeRUljZ76+eGSMFWKzEv2gI67rE9N84/RDc9r
+iAWlnWNHkdDsXSpn7lpaEnGrPUhRQKXMWdCQR5zVs6C9LhSwQJHAcEpv8+DeTnM6M0otKgrGHrK6
++4hTRALoDkKFj1m1yQKjgEAtXVrpzl8vHkna7JzWEArZrkVsQKjmwudIeMYBYzJBXSm3HFoDMtAK
+TZaa2mV3UeGx9R//D7M6CJ7OuC5y41hFGfkfPIo0EbS4qXeWKA50OZbyw2fJ57N9IUNuRdy85Zi7
+577l3AXzxXrrOaIfRWVKSSb8Sr0adjJ2QL4hBRdsi+esOjjBKLUnjXMwutC377CywjBpBgkqhkiG
+9w0BBwEwHgYJYIZIAWUDBAEaMBEEDLoC09S0iq0eLZPVXQIBEIA8HquqxeggESjFFQUbqTn5ZWhT
+t3/4fYSWFaoEkzhg+uPVzMUZERzgbxS31/lugzbyjVc7tB0/YxYg24MoBBBPinmZnNmLDMchxUuM
+WB8m

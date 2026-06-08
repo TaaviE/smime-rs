@@ -1,0 +1,17 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test ECDH P-256
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIIBdQYJKoZIhvcNAQcDoIIBZjCCAWICAQIxge6hgesCAQOgUaFPMAkGByqGSM49AgEDQgAEA5hy
+GT06ZZyDVvJDFUfSSVvg6zVOHYOEmdSb02fso9qBpkfd8JE8mXqcJC+udid3FJlmZybqNxzeOpYh
+2j9MZzAYBgkrgQUQhkg/AAIwCwYJYIZIAWUDBAEtMHkwdzBLMDMxFzAVBgNVBAoMDlpvbmUgTWVk
+aWEgT8OcMRgwFgYDVQQDDA9LYWxsZSBLcsO8cHRpamECFE28w8oYF7fixuz9mPASsDAJpwteBCi3
+EYwiRnBwXjojndm9l67cDeMeI4KYE3kR0FkjGZSuwtNRKgJCsy5lMGwGCSqGSIb3DQEHATAdBglg
+hkgBZQMEASoEEPKPT52UK7PKtwozhOmc/KaAQMazc85VBVNl9QtE3IlUUhL0aOJkdDjHMoECHQ1j
+ssNjTYBvU5kB+5kEL6Wzh0JiLLqQr2j/oziUBZsFMLTqhGE=

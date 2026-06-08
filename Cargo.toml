@@ -1,0 +1,91 @@
+[package]
+name = "smime"
+version = "0.1.13"
+edition = "2024"
+license = "EUPL-1.2"
+description = ""
+repository = "https://github.com/TaaviE/smime-rs"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "modify-cms"
+path = "src/modify_cms.rs"
+
+[[bin]]
+name = "create-cms"
+path = "src/create_cms.rs"
+required-features = ["decrypt"]
+
+[[bin]]
+name = "validation-proxy"
+path = "src/validation-proxy/main.rs"
+required-features = ["validation-proxy"]
+
+[dependencies]
+wasm-bindgen = { version = "0.2.122" }
+console_error_panic_hook = { version = "0.1.7", optional = true }
+der = { version = "0.8.0", features = ["derive"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["http2", "blocking", "gzip", "brotli", "zstd", "deflate", "rustls"] }
+mail-parser = { version = "0.11.3" }
+pem = "3.0.6"
+asn1 = { version = "0.24.1" }
+hex = "0.4.3"
+chrono = { version = "0.4.45", features = ["wasmbind", "serde"] }
+js-sys = "0.3.99"
+serde = { version = "1.0.228", features = ["derive"] }
+self_cell = "1.2.2"
+idna = "1.1.0"
+url = "2"
+clap = { version = "4.6.1", features = ["derive"] }
+fluent = "0.17.0"
+unic-langid = "0.9.6"
+serde-wasm-bindgen = "0.6.5"
+tsify = { version = "0.5", features = ["js"] }
+actix-web = { version = "4.13.0", optional = true }
+base64 = "0.22.1"
+env_logger = "0.11.10"
+log = "0.4.32"
+sha1 = { version = "0.11.0", features = ["oid"] }
+sha2 = { version = "0.11.0" }
+sha3 = { version = "0.12.0", features = ["oid"] }
+rsa = { version = "0.10.0-rc.18", features = ["sha2"] }
+p256 = { version = "0.14.0-rc.10", features = ["ecdsa", "pkcs8"] }
+p384 = { version = "0.14.0-rc.10", features = ["ecdsa", "pkcs8"] }
+p521 = { version = "0.14.0-rc.10", features = ["ecdsa", "pkcs8"] }
+ed25519-dalek = { version = "3.0.0-rc.0", features = ["pkcs8"] }
+x25519-dalek = { version = "3.0.0-rc.0", features = ["static_secrets"], optional = true }
+hkdf = { version = "0.13.0", optional = true }
+ansi-x963-kdf = { version = "0.1.0-rc.2", optional = true }
+signature = { version = "3.0.0", features = ["digest"] }
+getrandom = { version = "0.4.2", features = ["wasm_js"] }
+libcrux-ml-dsa = "0.0.9"
+libcrux-sha3 = "0.0.9"
+aes = { version = "0.9.1", optional = true }
+aes-gcm = { version = "0.11.0-rc.4", optional = true }
+ccm = { version = "0.6.0-rc.3", optional = true }
+cbc = { version = "0.2.1", optional = true }
+pkcs12 = { version = "0.2.0-pre.0", features = ["kdf"], optional = true }
+pbkdf2 = { version = "0.13.0", optional = true }
+aes-kw = { version = "0.3.1", optional = true }
+des = { version = "0.9.0", optional = true }
+
+[features]
+encrypt = ["aes", "cbc", "aes-gcm", "aes-kw", "ansi-x963-kdf",
+    "p256/ecdh", "p384/ecdh", "p521/ecdh"]
+decrypt = ["encrypt", "pbkdf2", "x25519-dalek", "hkdf", "pkcs12"]
+decrypt-3des = ["decrypt", "des"]
+decrypt-ccm = ["decrypt", "ccm"]
+validation-proxy = ["actix-web"]
+default = ["console_error_panic_hook", "decrypt"]
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3.72"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+actix-rt = "2.11.0"

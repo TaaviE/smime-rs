@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>S/MIME Rust WASM demo</title>
+    <script type="module" src="./index.ts"></script>
+  </head>
+  <body>
+    <h1>S/MIME Verification Demo</h1>
+    <p>Paste the full <code>.eml</code> message content below and click Verify.</p>
+
+    <form id="emlForm">
+      <label for="emlInput">EML Content</label>
+      <textarea id="emlInput" name="emlInput" rows="12" style="width: 100%;" placeholder="Paste .eml content here..."></textarea>
+      <div style="margin-top: 8px;">
+        <button id="verifyBtn" type="submit">Verify S/MIME</button>
+      </div>
+    </form>
+
+    <div id="result" style="margin-top: 16px; font-family: monospace;"></div>
+
+    <div style="margin-top: 16px;">
+      <label for="jsonOutput">Verification JSON</label>
+      <textarea id="jsonOutput" rows="14" style="width: 100%; font-family: monospace;" readonly placeholder="Verification JSON will appear here..."></textarea>
+    </div>
+  </body>
+</html>

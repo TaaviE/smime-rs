@@ -1,0 +1,17 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test ECDH AES-256-WRAP
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIIBdQYJKoZIhvcNAQcDoIIBZjCCAWICAQIxge6hgesCAQOgUaFPMAkGByqGSM49AgEDQgAEFlRw
+uu1ZZnHE2wXl722da2Zpx4gsbzjI1lx4hTmxl6IgEcDVhd7NvOtge+yCEifCoVxJuEzWqhRbcOTT
+PxWbvDAYBgkrgQUQhkg/AAIwCwYJYIZIAWUDBAEtMHkwdzBLMDMxFzAVBgNVBAoMDlpvbmUgTWVk
+aWEgT8OcMRgwFgYDVQQDDA9LYWxsZSBLcsO8cHRpamECFE28w8oYF7fixuz9mPASsDAJpwteBCim
+er5zUu+I98ePc9StsUa55ZETF01QP+VgzXG1uL8pdTwKAFkM54u/MGwGCSqGSIb3DQEHATAdBglg
+hkgBZQMEASoEEDB6mjh+tNmDb8wLrGHj5+iAQJ8nj5Pi95aRDECugJl3gaJ+mVEe61jTiTsLROMQ
+DJ7Rx3zTxzDZqWrw6FOWVRW8j58UjN5fqMYB1X/01RW1ScY=

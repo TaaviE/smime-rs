@@ -1,0 +1,131 @@
+MIME-Version: 1.0
+Content-Type: multipart/signed;
+ protocol="application/pkcs7-signature"; boundary="aa9";
+ micalg="sha-256"
+Subject: smime-multipart-complex-wrapped
+Message-ID: <smime-multipart-complex-wrapped@lhp.example>
+From: Alice <alice@smime.example>
+To: Bob <bob@smime.example>
+Date: Sat, 20 Feb 2021 12:05:02 -0500
+User-Agent: Sample MUA Version 1.0
+
+--aa9
+MIME-Version: 1.0
+Content-Type: message/rfc822; protected-headers="wrapped"
+Content-Disposition: inline
+
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="a30"
+Subject: smime-multipart-complex-wrapped
+Message-ID: <smime-multipart-complex-wrapped@lhp.example>
+From: Alice <alice@smime.example>
+To: Bob <bob@smime.example>
+Date: Sat, 20 Feb 2021 12:05:02 -0500
+User-Agent: Sample MUA Version 1.0
+
+--a30
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="844"
+
+--844
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+This is the smime-multipart-complex-wrapped message.
+
+This is a signed-only S/MIME message via PKCS#7 detached
+signature (multipart/signed).  The payload is a
+multipart/alternative message with an inline image/png
+attachment. It uses the Wrapped Message header protection
+scheme.
+
+-- 
+Alice
+alice@smime.example
+--844
+Content-Type: text/html; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+
+<html><head><title></title></head><body>
+<p>This is the <b>smime-multipart-complex-wrapped</b> message.</p>
+<p>This is a signed-only S/MIME message via PKCS#7 detached
+signature (multipart/signed).  The payload is a
+multipart/alternative message with an inline image/png
+attachment. It uses the Wrapped Message header protection
+scheme.</p>
+<p><tt>-- <br/>Alice<br/>alice@smime.example</tt></p></body></html>
+--844--
+
+--a30
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+Content-Disposition: inline
+
+iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAcElEQVR42uVTOxbA
+MAgS739nO3TpRw20dqpbfARQEjOywiwYnCtkDKnbcLk66sqlT+zt9cidkE+6KwkZ
+sgrzfcqVMpL2jo0447gYDpeArk+OnJHkIhAfTPRicihAf5YJrw7vjv0ZWRWM/uli
+vdPf1QZ2kDD9xppd8wAAAABJRU5ErkJggg==
+
+--a30--
+
+--aa9
+Content-Transfer-Encoding: base64
+Content-Type: application/pkcs7-signature; name="smime.p7s"
+
+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
+
+--aa9--

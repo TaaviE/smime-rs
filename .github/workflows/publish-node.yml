@@ -1,0 +1,46 @@
+name: Build & publish @zone-eu/smime-js
+
+# Builds the Node.js (CommonJS) WASM encryption package and publishes it on tags.
+# This is separate from the web/bundler build in pkg/.
+
+on:
+  push:
+    tags:
+      - 'node-v*'
+  workflow_dispatch:
+
+jobs:
+  build-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Native tests
+        run: cargo test
+
+      - name: Build Node package
+        run: ./scripts/build-node.sh
+
+      - name: Test the built package
+        run: npm install && npm test
+        working-directory: pkg-node
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/node-v')
+        run: npm publish --access public
+        working-directory: pkg-node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

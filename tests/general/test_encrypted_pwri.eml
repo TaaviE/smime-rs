@@ -1,0 +1,15 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test PWRI
+Date: Tue, 07 Apr 2026 15:13:15 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIIBEQYJKoZIhvcNAQcDoIIBAjCB/wIBAzGBi6OBiAIBAKAjBgkqhkiG9w0BBQwwFgQQWIaA9x9t
+AQ6bg15feMdWhQICCAAwLAYLKoZIhvcNAQkQAwkwHQYJYIZIAWUDBAEqBBDnRK88w8ujd4hf90QO
+wbiHBDActvPN6UR0OOPgjjxsOV3yZU0fQLLaqg1cQhsgYFWHdHarN/4IFbSAmBZWp8QFApIwbAYJ
+KoZIhvcNAQcBMB0GCWCGSAFlAwQBKgQQfrYTYlWPlOqH6UCJ3RJH0oBALizCwF9I92Vlul+RUIoj
+DexlaKGXhurm/Xrnv4s7qS16mzh6WiME0TVeg+HsVSI6Pu/kj1lPj7okL7UglVfnhg==

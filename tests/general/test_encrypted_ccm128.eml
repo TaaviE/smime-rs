@@ -1,0 +1,19 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test AES-128-CCM
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=authEnveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIIB/QYLKoZIhvcNAQkQARegggHsMIIB6AIBADGCAWcwggFjAgEAMEswMzEXMBUGA1UECgwOWm9u
+ZSBNZWRpYSBPw5wxGDAWBgNVBAMMD0thbGxlIEtyw7xwdGlqYQIUM7j4+uykYURct6WeiGk6df96
+1o0wDQYJKoZIhvcNAQEBBQAEggEAbzSZC16eHHIv8zLMwdTS8ZCV4iaVS6u2mNfHn251hK1Alk7z
+0s34EtdZXUBuLjg+ChH39SROb3DqQlFS4WAtnwvWfKjnr+teDPdjsG1E4i9eGWG5O6UNpjzH3IJ6
+NsldEo1lY8bhOSArpyBrLGoKHP3q2Q5Og0FGtgn2w04npEW6bwF6cCyngh+DcoqzuBg27nXKhiEn
+Zet3agYl6IRN9VNPgmjjvBDQ8kM/vVlnw9DxjqH2Hj6rXjwb7Ld2kXLdN/68BPUV1NMP5L+zU5j/
+U+Haitlwg3w+R8MxnDXwbMVo/NhWSYhRG607x7a6EgTA7H8Iy7dlDlN8Lxs6wkOmeDBmBgkqhkiG
+9w0BBwEwGwYJYIZIAWUDBAEHMA4EDPUratmFL4fbtMvo2oA8zfn+GfLRnSLSukE36qYoWcApGTfZ
++PnP8ld4BxJXtqs7DiDVIt/7YTAwqJ1Irrm7TnNsKITPLCRC+pxDBBBb1fROHqPBjX2XjPmyyuL9

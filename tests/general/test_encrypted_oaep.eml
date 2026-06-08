@@ -1,0 +1,20 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test OAEP SHA-256
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIICGgYJKoZIhvcNAQcDoIICCzCCAgcCAQAxggGSMIIBjgIBADBLMDMxFzAVBgNVBAoMDlpvbmUg
+TWVkaWEgT8OcMRgwFgYDVQQDDA9LYWxsZSBLcsO8cHRpamECFDO4+PrspGFEXLelnohpOnX/etaN
+MDgGCSqGSIb3DQEBBzAroA0wCwYJYIZIAWUDBAIBoRowGAYJKoZIhvcNAQEIMAsGCWCGSAFlAwQC
+AQSCAQBLUW/kK9ijAqTs++AQ9ZOaz+986gHxCiMnOO35ntplRxs1FDmRaRZn+AGwFyWqZKsBua6V
+ViYL1oNheoKwJdiSOaegvI53CCPpo4dtL1V80eFuJzUKE5e2dXLkLF6+FEgeMA1GQD1Urk+e9uBV
++Dak6PboRjPXcdPLlNzqv1KAqsiWXN6XHEUX9SD4Kfo7OhVirKZXoNdCUr4EcL0zi3gF0srssxYP
+MC3igfelv9jAKzeBti+0Ii/fCGLWCyyoZ1TA3PIAW/CUgfKufOo1CjGPlcncUqf9P/1110csuUlW
+cU1uouvClxY9TdBCmYwYu7j/wlTzCtGJinPYFVPURa1OMGwGCSqGSIb3DQEHATAdBglghkgBZQME
+ASoEEAVTdZXT0VUTty7iCtnGD1mAQBQ5iChY3u3dbINKnRR4riyMlClgzALBRNRT+jGXCV8/3HkW
+7vQCBbqa9SJLV4rKqJA6mz+CiCINQgqfks1S1Eg=

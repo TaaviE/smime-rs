@@ -1,0 +1,15 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test X25519 x25519_x963_sha512
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIHlBgkqhkiG9w0BBwOggdcwgdQCAQIxgYChfgIBA6AsoSowBQYDK2VuAyEAHJ/Yj0VgbZMqgMcY
+JK4VHRXXPnfeOOjgAIUuYU+ucBkwFQYGK4EEAQsDMAsGCWCGSAFlAwQBBTA0MDKgFgQUzUvjAOuG
+jsuWRdcARfZoBD0YJfcEGMr+5tepKf5CnOOoUzw6qpLj8O+/1xNXqDBMBgkqhkiG9w0BBwEwHQYJ
+YIZIAWUDBAECBBABAgMEBQYHCAkKCwwNDg8QgCDZsHod+voUuNhsbDKt1hdx8luZgIfd8AEjF8gx
+NgvueA==

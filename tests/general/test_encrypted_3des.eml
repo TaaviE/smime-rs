@@ -1,0 +1,21 @@
+From: signer@example.com
+To: recipient@example.com
+Subject: 3DES encrypted test
+Date: Wed, 01 Jan 2025 12:00:00 +0000
+MIME-Version: 1.0
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Type: application/pkcs7-mime; smime-type=enveloped-data; name="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIIB9gYJKoZIhvcNAQcDoIIB5zCCAeMCAQAxggFnMIIBYwIBADBLMDMxFzAVBgNV
+BAoMDlpvbmUgTWVkaWEgT8OcMRgwFgYDVQQDDA9LYWxsZSBLcsO8cHRpamECFDO4
++PrspGFEXLelnohpOnX/etaNMA0GCSqGSIb3DQEBAQUABIIBAEEf0exghe/E6iNh
+M20aISs5RRf0QwNm55ntW4pJDeENPMO1sp9acrATisa0gCht6RqgaCSGYAdIqcS0
+3NG79sLUK23AsiPfmNLryjYOT0an5LaNiayPkRYoLW1OKeoCgK7c9IPEXF6d/xv/
+seeuyveKrKdCQjSXdG/ntGYsfXzSt7aeAHTWnf7eMMeGS0fYjIt9mVSlMB5D6bNq
+MuE76dFVqnb+yC8R68mCwKwTM2wiROKpiYfiDs3bZYbXqyfNYojLOe4E06KsEwIS
+gq78VilVcSY6IqLIuSKxiZzDm967kkWhDIYiPv+17bNxkDQU0YErGqdcNo5nDacs
+5fM807QwcwYJKoZIhvcNAQcBMBQGCCqGSIb3DQMHBAg/2I2aMEBaqoBQUF7PgcOS
+MnkvklEW523NwWNIGhClp3mbpB0VHj4gMcz5LATwKQg6EqwO1cYfdYy+ZCv+bfv8
+eqr0U0ykNJV5bDycyeBpkK+smZwFPDbfgyQ=
+

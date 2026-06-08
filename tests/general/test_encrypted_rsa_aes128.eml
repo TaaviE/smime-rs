@@ -1,0 +1,19 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test AES-128-CBC RSA PKCS1
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIIB7wYJKoZIhvcNAQcDoIIB4DCCAdwCAQAxggFnMIIBYwIBADBLMDMxFzAVBgNVBAoMDlpvbmUg
+TWVkaWEgT8OcMRgwFgYDVQQDDA9LYWxsZSBLcsO8cHRpamECFDO4+PrspGFEXLelnohpOnX/etaN
+MA0GCSqGSIb3DQEBAQUABIIBAESQBaot219XlLz6QMX+dc3W2IDPNnwTGgwy0HYEbDQCQ8ioHefV
+SjKtockdlr27MHqSsWPvG0BjB14+2pv6M0i60ooD48WaGTxyUDDgf8CyzBNHmLrn+5t0Vt7u42JL
+W1bz668sXGPC+6RUZCWgqYsePy4U0969u/zoM7ZHWz4XachP8RFwvaBzPXmaT16Njn7qs2ZpUfyv
+gaeuaqH+THULhvI0ZhkXRq3IzcsFYKU+dVvqifAryynwugH9OkZkMvH06OcAuS00jF36sC0zpzom
+DpBg6hSXiitUlCJKAFXc1l/ISJ9tk+YIL9RbhJkahkxZnoqfuu07AHT9GnRKdFowbAYJKoZIhvcN
+AQcBMB0GCWCGSAFlAwQBAgQQurc+8iAXvKTsgTHsgTSaT4BA4NSoHiAxMeYpajyPjjxey60ql0nU
+1CuBnQiZMwl04u3HN+sfPOSaT908ced6KtQ887OPjN5RvSNe8qpQiJfYyw==

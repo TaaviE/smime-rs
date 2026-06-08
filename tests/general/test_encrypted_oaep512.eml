@@ -1,0 +1,20 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test OAEP SHA-512
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIICGgYJKoZIhvcNAQcDoIICCzCCAgcCAQAxggGSMIIBjgIBADBLMDMxFzAVBgNVBAoMDlpvbmUg
+TWVkaWEgT8OcMRgwFgYDVQQDDA9LYWxsZSBLcsO8cHRpamECFDO4+PrspGFEXLelnohpOnX/etaN
+MDgGCSqGSIb3DQEBBzAroA0wCwYJYIZIAWUDBAIDoRowGAYJKoZIhvcNAQEIMAsGCWCGSAFlAwQC
+AwSCAQB/SHfUIZVPklHCOOKGWsPDtkXsI5aiyBl0GRL2+prT5wj2P73Df4/a7Luk/z0q7cHBWbwr
+fKlUv3TLC1gnv56ANi9Qxh/V5V9g0IkgtnLvv56QoRzmGn/gWRfZSOyNwqIdRfaYbkYKbJ0G3MOF
+8bRM1ei5uubKppiT7k7AikrscKpKhXv1Xo1XNy8G8fc9eA90/LA+ASUda3clG02s9z+gD95b7iJB
+V4bzD48Q/2YpstjN4H3HgOPR6Nj9iy28dAhUzwAK8azeT65F5ELGCgAISx57hpqUNNMGp0euXMDk
+cr/ysRcOVlsRoj8cbSRlUroF44kjL9IoNkdDIWhCvEGKMGwGCSqGSIb3DQEHATAdBglghkgBZQME
+ASoEEJUo/R2dIKOi61uey8/9Dp2AQFpj3LwIFHc3mojbrNK/7/0O+/a0YjXBGqcRFdfvmHv5oSzZ
+5DeEUmRwTKT9DO9F4cAlznFUULi8hXQAOtDNbLU=

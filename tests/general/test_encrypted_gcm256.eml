@@ -1,0 +1,20 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test AES-256-GCM
+Date: Wed, 01 Apr 2026 16:20:22 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=authEnveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIICAAYLKoZIhvcNAQkQARegggHvMIIB6wIBADGCAWcwggFjAgEAMEswMzEXMBUGA1UECgwOWm9u
+ZSBNZWRpYSBPw5wxGDAWBgNVBAMMD0thbGxlIEtyw7xwdGlqYQIUM7j4+uykYURct6WeiGk6df96
+1o0wDQYJKoZIhvcNAQEBBQAEggEAKvH51P/a3jx63v7ANxDNj7yKAdAx6pjBPYuvNavTvKY0uI3L
+TbfCASLy5Hc5mu1QqOj7U33Y6OSw+YYqDcIbJd96lIqhouVo+h7Ra0KYyS+zw7Ag1jOf1IYj9BQH
+YEVVUB7I/W7c4rd9xyiXuNsNSkcO6yIDBAOB8f5/b64MK2h33P0ENz1bMdPWbf9r+nDLNCwpkZU2
+iUA812ENqWINnIbagcVsX85M3XzQ7FHSwEV/zWZczHe12NDVUeeLkrkKULwfIf8qh06jk89xxkbu
+S7PsCs8P95OoEqMXfkVhxyvxEgkE90Zk0CZWG4jXvUkVdpfSdLiOYABPkOmod/SF2zBpBgkqhkiG
+9w0BBwEwHgYJYIZIAWUDBAEuMBEEDB77RlowleRDW6lc2QIBEIA8axT8/olTrRcFgLpnSEDdpqEv
+86QydLO+p0NJXUo4KVyNgfEnzCLF9obi+TSphFnkgPYf4vpznQLFF0TUBBA9X3zFgV18lO6mPvkJ
+DypE
