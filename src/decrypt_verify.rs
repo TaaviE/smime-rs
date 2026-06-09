@@ -279,6 +279,7 @@ fn decrypt_auth_enveloped_data_layer(
 
 /// Decrypt an EnvelopedData, populate EncryptionInfo, and set signed_content
 /// to the decrypted plaintext for further processing.
+/// This works on EnvelopedData and thus cannot claim anything about the authenticity of the encrypted data.
 fn decrypt_enveloped_data_layer(
     enveloped_data: &crate::cryptography_x509::pkcs7::EnvelopedData<'_>,
     keys: &decrypt::DecryptionKeys,
