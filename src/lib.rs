@@ -466,15 +466,7 @@ fn check_date_mismatch(date_a: Option<DateTime<Utc>>, date_b: Option<DateTime<Ut
 /// Ensure CRLF before each MIME boundary and a trailing CRLF.
 /// Works around a WildDuck bug where boundaries lack preceding CRLF.
 fn normalize_wildduck_content(content: &[u8], inner_message: &mail_parser::Message<'_>) -> Vec<u8> {
-    let mut boundary = None;
-    if let Some(ct) = inner_message.content_type() {
-        for attr in ct.attributes.as_deref().unwrap_or(&[]) {
-            if attr.name.to_lowercase() == "boundary" {
-                boundary = Some(format!("\r\n--{}", attr.value));
-                break;
-            }
-        }
-    }
+    let boundary = inner_message.content_type().and_then(|ct| ct.attribute("boundary")).map(|b| format!("\r\n--{b}"));
 
     let mut out = Vec::with_capacity(content.len() + 32);
     let mut i = 0;
@@ -751,9 +743,8 @@ pub fn verify_smime_from_eml_detailed(eml_text: String, trust: TrustConfig) -> S
     console_log!("content_type: {:?}", content_type);
 
     let is_multipart = content_type.c_type.as_ref().eq_ignore_ascii_case("multipart");
-    let boundary: Option<String> = content_type.attribute("boundary").map(|b| b.to_string());
 
-    if is_multipart && boundary.is_none() {
+    if is_multipart && content_type.attribute("boundary").is_none() {
         result.failures.push(SmimeError::MissingBoundary);
         return result;
     }

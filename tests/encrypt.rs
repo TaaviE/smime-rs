@@ -3,15 +3,11 @@
 //! Round-trip tests: encrypt with smime::encrypt, then decrypt with smime::decrypt.
 
 use smime::cryptography_x509::pkcs7::{Content, ContentInfo};
-use smime::decrypt::{decrypt_auth_enveloped_data, decrypt_enveloped_data, DecryptionKeys};
-use smime::encrypt::{encrypt, ContentCipher};
+use smime::decrypt::{DecryptionKeys, decrypt_auth_enveloped_data, decrypt_enveloped_data};
+use smime::encrypt::{ContentCipher, encrypt};
 use std::fs;
 
-fn key_der(path: &str) -> Vec<u8> {
-    pem::parse(fs::read_to_string(path).unwrap()).unwrap().into_contents()
-}
-
-fn cert_der(path: &str) -> Vec<u8> {
+fn pem_contents(path: &str) -> Vec<u8> {
     pem::parse(fs::read_to_string(path).unwrap()).unwrap().into_contents()
 }
 
@@ -30,7 +26,8 @@ fn roundtrip(cert_path: &str, key_path: &str, cipher: ContentCipher, pkcs1v15: b
 
     let der = encrypt(&certs, plaintext, cipher, pkcs1v15).unwrap().expect("encrypt produced no recipients");
 
-    let keys = DecryptionKeys { private_key_der: &key_der(key_path), recipient_cert_der: &cert_der(cert_path), ..Default::default() };
+    let keys =
+        DecryptionKeys { private_key_der: &pem_contents(key_path), recipient_cert_der: &pem_contents(cert_path), ..Default::default() };
     let recovered = decrypt_content_info(&der, &keys);
     assert_eq!(recovered, plaintext);
 }
@@ -73,15 +70,15 @@ fn multi_recipient_rsa_and_ec() {
 
     // Each recipient can independently recover the plaintext.
     let rsa_keys = DecryptionKeys {
-        private_key_der: &key_der("tests/keys/test_rsa.key"),
-        recipient_cert_der: &cert_der("tests/keys/test_rsa.pem"),
+        private_key_der: &pem_contents("tests/keys/test_rsa.key"),
+        recipient_cert_der: &pem_contents("tests/keys/test_rsa.pem"),
         ..Default::default()
     };
     assert_eq!(decrypt_content_info(&der, &rsa_keys), plaintext);
 
     let ec_keys = DecryptionKeys {
-        private_key_der: &key_der("tests/keys/test_p256.key"),
-        recipient_cert_der: &cert_der("tests/keys/test_p256.pem"),
+        private_key_der: &pem_contents("tests/keys/test_p256.key"),
+        recipient_cert_der: &pem_contents("tests/keys/test_p256.pem"),
         ..Default::default()
     };
     assert_eq!(decrypt_content_info(&der, &ec_keys), plaintext);

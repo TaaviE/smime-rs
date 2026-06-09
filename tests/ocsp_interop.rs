@@ -60,10 +60,7 @@ const FIXTURE: &str = "tests/ocsp/stapled_issuer_good.eml";
 
 #[test]
 fn openssl_verifies_our_stapled_signeddata() {
-    if !openssl_available() {
-        eprintln!("skipping: openssl not on PATH");
-        return;
-    }
+    assert!(openssl_available(), "openssl is required on PATH for producer-side interop tests");
     let root = root_ca_file();
     let out = Command::new("openssl")
         .args(["cms", "-verify", "-in", FIXTURE, "-CAfile"])
@@ -76,10 +73,7 @@ fn openssl_verifies_our_stapled_signeddata() {
 
 #[test]
 fn openssl_parses_our_stapled_ocsp_revinfo() {
-    if !openssl_available() {
-        eprintln!("skipping: openssl not on PATH");
-        return;
-    }
+    assert!(openssl_available(), "openssl is required on PATH for producer-side interop tests");
     let out =
         Command::new("openssl").args(["cms", "-cmsout", "-in", FIXTURE, "-print", "-noout"]).output().expect("run openssl cms -cmsout");
     assert!(out.status.success(), "openssl cms -cmsout failed: {}", String::from_utf8_lossy(&out.stderr));

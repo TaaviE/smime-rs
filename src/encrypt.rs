@@ -7,15 +7,15 @@
 
 use crate::cryptography_x509::certificate::Certificate;
 use crate::cryptography_x509::common::{
-    AlgorithmIdentifier, AlgorithmParameters, Asn1ReadableOrWritable, EcParameters, GcmParameters, RsaOaepParameters,
-    PSS_SHA256_HASH_ALG, PSS_SHA256_MASK_GEN_ALG,
+    AlgorithmIdentifier, AlgorithmParameters, Asn1ReadableOrWritable, EcParameters, GcmParameters, PSS_SHA256_HASH_ALG,
+    PSS_SHA256_MASK_GEN_ALG, RsaOaepParameters,
 };
 use crate::cryptography_x509::oid;
 use crate::cryptography_x509::pkcs7::*;
 use crate::errors::SmimeError;
 
 use aes_kw::KeyInit as _;
-use cbc::cipher::{block_padding::Pkcs7, BlockModeEncrypt, KeyIvInit};
+use cbc::cipher::{BlockModeEncrypt, KeyIvInit, block_padding::Pkcs7};
 use rsa::pkcs8::DecodePublicKey as _;
 use rsa::traits::PublicKeyParts as _;
 
@@ -40,21 +40,30 @@ pub fn encrypt_aes_cbc(cek: &[u8], iv: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
     let mut buf = vec![0u8; padded_len];
     buf[..plaintext.len()].copy_from_slice(plaintext);
     match cek.len() {
-        16 => cbc::Encryptor::<aes::Aes128>::new_from_slices(cek, iv).unwrap().encrypt_padded::<Pkcs7>(&mut buf, plaintext.len()).unwrap().to_vec(),
-        24 => cbc::Encryptor::<aes::Aes192>::new_from_slices(cek, iv).unwrap().encrypt_padded::<Pkcs7>(&mut buf, plaintext.len()).unwrap().to_vec(),
-        32 => cbc::Encryptor::<aes::Aes256>::new_from_slices(cek, iv).unwrap().encrypt_padded::<Pkcs7>(&mut buf, plaintext.len()).unwrap().to_vec(),
+        16 => cbc::Encryptor::<aes::Aes128>::new_from_slices(cek, iv)
+            .unwrap()
+            .encrypt_padded::<Pkcs7>(&mut buf, plaintext.len())
+            .unwrap()
+            .to_vec(),
+        24 => cbc::Encryptor::<aes::Aes192>::new_from_slices(cek, iv)
+            .unwrap()
+            .encrypt_padded::<Pkcs7>(&mut buf, plaintext.len())
+            .unwrap()
+            .to_vec(),
+        32 => cbc::Encryptor::<aes::Aes256>::new_from_slices(cek, iv)
+            .unwrap()
+            .encrypt_padded::<Pkcs7>(&mut buf, plaintext.len())
+            .unwrap()
+            .to_vec(),
         _ => panic!("invalid AES key length: {}", cek.len()),
     }
 }
 
 /// AES-256-GCM content encryption (12-byte nonce, 16-byte tag). Returns (ciphertext, tag).
 fn encrypt_aes256_gcm(cek: &[u8], nonce: &[u8; 12], aad: &[u8], plaintext: &[u8]) -> (Vec<u8>, [u8; 16]) {
-    use aes_gcm::{aead::AeadInOut, KeyInit};
+    use aes_gcm::{KeyInit, aead::AeadInOut};
     let mut buf = plaintext.to_vec();
-    let tag = aes_gcm::Aes256Gcm::new_from_slice(cek)
-        .unwrap()
-        .encrypt_inout_detached(nonce.into(), aad, (&mut buf[..]).into())
-        .unwrap();
+    let tag = aes_gcm::Aes256Gcm::new_from_slice(cek).unwrap().encrypt_inout_detached(nonce.into(), aad, (&mut buf[..]).into()).unwrap();
     (buf, tag.into())
 }
 
@@ -70,7 +79,8 @@ fn validate_spki(cert: &Certificate) -> Result<(), SmimeError> {
     match &cert.tbs_cert.spki.algorithm.params {
         AlgorithmParameters::RSA(_) => {
             let spki_der = asn1::write_single(&cert.tbs_cert.spki).map_err(|e| SmimeError::Raw(format!("SPKI DER: {}", e)))?;
-            let pk = rsa::RsaPublicKey::from_public_key_der(&spki_der).map_err(|e| SmimeError::Raw(format!("invalid RSA public key: {}", e)))?;
+            let pk =
+                rsa::RsaPublicKey::from_public_key_der(&spki_der).map_err(|e| SmimeError::Raw(format!("invalid RSA public key: {}", e)))?;
             let bits = pk.n().bits();
             if !(2048..=4096).contains(&bits) {
                 return Err(SmimeError::Raw(format!("unsupported RSA key size: {} bits (expected 2048-4096)", bits)));
@@ -91,15 +101,18 @@ fn validate_spki(cert: &Certificate) -> Result<(), SmimeError> {
 /// Build a KeyTransRecipientInfo (RSA). `pkcs1v15` selects PKCS#1 v1.5, otherwise OAEP (SHA-256).
 fn build_ktri(cek: &[u8], cert: &Certificate, pkcs1v15: bool) -> Result<Vec<u8>, SmimeError> {
     let spki_der = asn1::write_single(&cert.tbs_cert.spki).map_err(|e| SmimeError::Raw(format!("SPKI DER: {}", e)))?;
-    let rsa_pub = rsa::RsaPublicKey::from_public_key_der(&spki_der).map_err(|e| SmimeError::Raw(format!("invalid RSA public key: {}", e)))?;
+    let rsa_pub =
+        rsa::RsaPublicKey::from_public_key_der(&spki_der).map_err(|e| SmimeError::Raw(format!("invalid RSA public key: {}", e)))?;
     let mut rng = rsa::rand_core::UnwrapErr(getrandom::SysRng);
 
     let (encrypted_cek, kea_params) = if pkcs1v15 {
         let ct = rsa_pub.encrypt(&mut rng, rsa::Pkcs1v15Encrypt, cek).map_err(|e| SmimeError::Raw(format!("RSA PKCS#1 v1.5: {}", e)))?;
         (ct, AlgorithmParameters::RSA(Some(())))
     } else {
-        let ct = rsa_pub.encrypt(&mut rng, rsa::Oaep::<sha2::Sha256>::new(), cek).map_err(|e| SmimeError::Raw(format!("RSA-OAEP: {}", e)))?;
-        let params = RsaOaepParameters { hash_algorithm: PSS_SHA256_HASH_ALG, mask_gen_algorithm: PSS_SHA256_MASK_GEN_ALG, p_source_func: None };
+        let ct =
+            rsa_pub.encrypt(&mut rng, rsa::Oaep::<sha2::Sha256>::new(), cek).map_err(|e| SmimeError::Raw(format!("RSA-OAEP: {}", e)))?;
+        let params =
+            RsaOaepParameters { hash_algorithm: PSS_SHA256_HASH_ALG, mask_gen_algorithm: PSS_SHA256_MASK_GEN_ALG, p_source_func: None };
         (ct, AlgorithmParameters::RsaesOaep(Box::new(params)))
     };
 
@@ -129,8 +142,11 @@ fn build_kari(cek: &[u8], cert: &Certificate, curve: &asn1::ObjectIdentifier) ->
     let shared_info_der = asn1::write_single(&shared_info).map_err(|e| SmimeError::Raw(format!("SharedInfo DER: {}", e)))?;
 
     // keyEncryptionAlgorithm = dhSinglePass-stdDH-sha256kdf with AES-256-WRAP as parameter.
-    let wrap_alg_der = asn1::write_single(&AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Other(oid::AES256_WRAP, None) })
-        .map_err(|e| SmimeError::Raw(format!("wrap alg DER: {}", e)))?;
+    let wrap_alg_der = asn1::write_single(&AlgorithmIdentifier {
+        oid: asn1::DefinedByMarker::marker(),
+        params: AlgorithmParameters::Other(oid::AES256_WRAP, None),
+    })
+    .map_err(|e| SmimeError::Raw(format!("wrap alg DER: {}", e)))?;
     let wrap_alg_tlv: asn1::Tlv = asn1::parse_single(&wrap_alg_der).map_err(|e| SmimeError::Raw(format!("wrap alg TLV: {}", e)))?;
 
     macro_rules! kari_for_curve {
@@ -147,7 +163,10 @@ fn build_kari(cek: &[u8], cert: &Certificate, curve: &asn1::ObjectIdentifier) ->
                 .map_err(|_| SmimeError::Raw("X9.63-KDF output too long".into()))?;
 
             let mut wrapped_cek = vec![0u8; cek.len() + 8];
-            aes_kw::KwAes256::new_from_slice(&kek).unwrap().wrap_key(cek, &mut wrapped_cek).map_err(|e| SmimeError::Raw(format!("AES key wrap: {}", e)))?;
+            aes_kw::KwAes256::new_from_slice(&kek)
+                .unwrap()
+                .wrap_key(cek, &mut wrapped_cek)
+                .map_err(|e| SmimeError::Raw(format!("AES key wrap: {}", e)))?;
 
             (eph_pk_bytes.as_bytes().to_vec(), wrapped_cek)
         }};
@@ -167,32 +186,39 @@ fn build_kari(cek: &[u8], cert: &Certificate, curve: &asn1::ObjectIdentifier) ->
     let rek = RecipientEncryptedKey { rid: KeyAgreeRecipientIdentifier::IssuerAndSerialNumber(ias), encrypted_key: &wrapped_cek };
     let reks = [rek];
     let originator_key = OriginatorPublicKey {
-        algorithm: AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::ECDSA(Some(EcParameters::NamedCurve(curve.clone()))) },
+        algorithm: AlgorithmIdentifier {
+            oid: asn1::DefinedByMarker::marker(),
+            params: AlgorithmParameters::ECDSA(Some(EcParameters::NamedCurve(curve.clone()))),
+        },
         public_key: asn1::BitString::new(&eph_pk_bytes, 0).unwrap(),
     };
     let kari = KeyAgreeRecipientInfo {
         version: 3,
         originator: OriginatorIdentifierOrKey::OriginatorKey(originator_key),
         ukm: None,
-        key_encryption_algorithm: AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Other(oid::DH_STD_SHA256, Some(wrap_alg_tlv)) },
+        key_encryption_algorithm: AlgorithmIdentifier {
+            oid: asn1::DefinedByMarker::marker(),
+            params: AlgorithmParameters::Other(oid::DH_STD_SHA256, Some(wrap_alg_tlv)),
+        },
         recipient_encrypted_keys: Asn1ReadableOrWritable::new_write(asn1::SequenceOfWriter::new(&reks)),
     };
     asn1::write_single(&RecipientInfo::KeyAgreeRecipientInfo(kari)).map_err(|e| SmimeError::Raw(format!("KARI DER: {}", e)))
 }
 
 /// Build a RecipientInfo for one certificate, or `None` if its key type is unsupported.
-fn build_recipient_info(cek: &[u8], cert: &Certificate, pkcs1v15: bool) -> Option<Vec<u8>> {
+/// Failures for a supported key type are propagated.
+fn build_recipient_info(cek: &[u8], cert: &Certificate, pkcs1v15: bool) -> Result<Option<Vec<u8>>, SmimeError> {
     match &cert.tbs_cert.spki.algorithm.params {
         AlgorithmParameters::RSA(_) => {
-            validate_spki(cert).ok()?;
-            build_ktri(cek, cert, pkcs1v15).ok()
+            validate_spki(cert)?;
+            build_ktri(cek, cert, pkcs1v15).map(Some)
         }
         AlgorithmParameters::ECDSA(Some(EcParameters::NamedCurve(curve)))
-        if *curve == oid::EC_SECP256R1 || *curve == oid::EC_SECP384R1 || *curve == oid::EC_SECP521R1 =>
-            {
-                build_kari(cek, cert, curve).ok()
-            }
-        _ => None,
+            if *curve == oid::EC_SECP256R1 || *curve == oid::EC_SECP384R1 || *curve == oid::EC_SECP521R1 =>
+        {
+            build_kari(cek, cert, curve).map(Some)
+        }
+        _ => Ok(None),
     }
 }
 
@@ -212,14 +238,11 @@ pub fn encrypt(certs_pem: &[String], plaintext: &[u8], cipher: ContentCipher, pk
     let mut ris_der: Vec<Vec<u8>> = Vec::new();
     let mut all_ktri = true;
     for der in &cert_ders {
-        let cert: Certificate = match asn1::parse_single(der) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
+        let cert: Certificate = asn1::parse_single(der).map_err(|e| SmimeError::Raw(format!("invalid certificate: {}", e)))?;
         if !matches!(cert.tbs_cert.spki.algorithm.params, AlgorithmParameters::RSA(_)) {
             all_ktri = false;
         }
-        if let Some(ri) = build_recipient_info(&cek, &cert, pkcs1v15) {
+        if let Some(ri) = build_recipient_info(&cek, &cert, pkcs1v15)? {
             ris_der.push(ri);
         }
     }
@@ -240,12 +263,18 @@ pub fn encrypt(certs_pem: &[String], plaintext: &[u8], cipher: ContentCipher, pk
                 recipient_infos: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(&ris)),
                 encrypted_content_info: EncryptedContentInfo {
                     content_type: PKCS7_DATA_OID,
-                    content_encryption_algorithm: AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Aes256Cbc(iv) },
+                    content_encryption_algorithm: AlgorithmIdentifier {
+                        oid: asn1::DefinedByMarker::marker(),
+                        params: AlgorithmParameters::Aes256Cbc(iv),
+                    },
                     encrypted_content: Some(&ciphertext),
                 },
                 unprotected_attrs: None,
             };
-            let content_info = ContentInfo { content_type: asn1::DefinedByMarker::marker(), content: Content::EnvelopedData(asn1::Explicit::new(Box::new(enveloped))) };
+            let content_info = ContentInfo {
+                content_type: asn1::DefinedByMarker::marker(),
+                content: Content::EnvelopedData(asn1::Explicit::new(Box::new(enveloped))),
+            };
             asn1::write_single(&content_info).map_err(|e| SmimeError::Raw(format!("EnvelopedData DER: {}", e)))?
         }
         ContentCipher::Aes256Gcm => {
@@ -267,7 +296,10 @@ pub fn encrypt(certs_pem: &[String], plaintext: &[u8], cipher: ContentCipher, pk
                 mac: &tag,
                 unauth_attrs: None,
             };
-            let content_info = ContentInfo { content_type: asn1::DefinedByMarker::marker(), content: Content::AuthEnvelopedData(asn1::Explicit::new(Box::new(auth_enveloped))) };
+            let content_info = ContentInfo {
+                content_type: asn1::DefinedByMarker::marker(),
+                content: Content::AuthEnvelopedData(asn1::Explicit::new(Box::new(auth_enveloped))),
+            };
             asn1::write_single(&content_info).map_err(|e| SmimeError::Raw(format!("AuthEnvelopedData DER: {}", e)))?
         }
     };

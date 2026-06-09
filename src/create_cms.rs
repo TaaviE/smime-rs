@@ -2008,6 +2008,35 @@ fn gen_ocsp_stapling_fixtures() {
         write("stapled_responder_good", &cms);
     }
 
+    // 3b. Good OCSP signed by a delegated responder whose certificate has expired -> the
+    //     responder is not valid at verification time, so the staple is ignored.
+    {
+        let (responder_der, _rs, responder_subject_der) = build_cert(
+            &root_subject_der,
+            "Test OCSP Responder",
+            &leaf_spki,
+            validity_utc((2024, 1, 1), (2024, 2, 1)),
+            &[(oid::EXTENDED_KEY_USAGE_OID, false, ev_eku(&[oid::EKU_OCSP_SIGNING_OID])), (oid::OCSP_NO_CHECK_OID, false, ev_null())],
+            &root_sign,
+        );
+        let responder_cert: FixtureCert<'_> = asn1::parse_single(&responder_der).unwrap();
+        let ocsp = build_ocsp_response(
+            &root_subject_der,
+            &root_pubkey_bits,
+            &leaf_serial,
+            &responder_subject_der,
+            true,
+            this_update,
+            next_update,
+            vec![responder_cert],
+            CertIdHash::Sha1,
+            &leaf_sign,
+        );
+        let cms =
+            build_stapled_cms(&leaf_der, &root_der, &[&responder_der], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
+        write("stapled_responder_expired", &cms);
+    }
+
     // 4. Forged revocation: a Revoked OCSP with a correct CertID (real issuer name+key+serial)
     //    that claims to come from the root but is signed with the attacker's key. The signature
     //    is pinned to the trust-anchored issuer's key, so verification fails and it is ignored.
@@ -2026,6 +2055,25 @@ fn gen_ocsp_stapling_fixtures() {
         );
         let cms = build_stapled_cms(&leaf_der, &root_der, &[], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
         write("stapled_forged_revoked", &cms);
+    }
+
+    // 4a. Forged Good: the mirror of 4 - an attacker must not be able to mint a Good badge
+    //     by signing a Good response with their own key while claiming to be the root.
+    {
+        let ocsp = build_ocsp_response(
+            &root_subject_der,
+            &root_pubkey_bits,
+            &leaf_serial,
+            &root_subject_der,
+            true,
+            this_update,
+            None,
+            vec![],
+            CertIdHash::Sha1,
+            &leaf_sign,
+        );
+        let cms = build_stapled_cms(&leaf_der, &root_der, &[], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
+        write("stapled_forged_issuer", &cms);
     }
 
     // 4b. CertID mismatch: a Revoked OCSP validly signed by the real root, but whose CertID
