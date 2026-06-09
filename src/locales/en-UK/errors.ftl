@@ -32,6 +32,7 @@ err-unsupported-key-encryption-alg = Unsupported key encryption algorithm: {$alg
 err-unsupported-content-encryption-alg = Unsupported content encryption algorithm: {$alg}
 err-no-matching-recipient = No matching recipient for the provided private key
 err-private-key-parse-failed = Failed to parse private key: {$err}
+err-stapled-ocsp-revoked = Certificate '{$subject}' was revoked by a stapled OCSP response
 
 warn-cms-version-mismatch = {$structure} version is {$actual}, expected {$expected}
 warn-attribute-cardinality = Multiple {$attr} attributes present for signer: {$idx}

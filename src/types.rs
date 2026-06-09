@@ -82,9 +82,12 @@ pub struct ValidationDetails {
     pub certificate_trusted_valid: bool,
     /// Certificate of this signer
     pub certificate: String,
-    /// If the certificate has been revoked (currently not implemented)
+    /// Status asserted by a verified stapled OCSP response (see [`crate::ocsp`]),
+    /// pinned to the trust-anchored issuer;
+    /// A verified `revoked` staple clears `certificate_trusted_valid`.
+    /// `None` when there is no staple for the signer
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub revocation_status: Option<String>,
+    pub revocation_status: Option<crate::ocsp::StapledStatus>,
     /// If all the SCTs are valid (trust unknown)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scts_valid: Option<bool>,
@@ -104,10 +107,7 @@ impl fmt::Debug for ValidationDetails {
             .field("certificate", &truncate_middle(&self.certificate, 64));
         //.field("certificate", &self.certificate);
 
-        match &self.revocation_status {
-            Some(v) => ds.field("revocation_status", v),
-            None => ds.field("revocation_status", &None::<String>),
-        };
+        ds.field("revocation_status", &self.revocation_status);
 
         match &self.scts_valid {
             Some(v) => ds.field("sct_valid", v),

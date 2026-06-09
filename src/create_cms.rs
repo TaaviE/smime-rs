@@ -30,6 +30,8 @@ enum Commands {
         #[command(subcommand)]
         command: EncryptCommands,
     },
+    /// Generate stapled-OCSP validity-extension fixtures
+    Ocsp,
     /// Run all generators
     All,
 }
@@ -752,6 +754,7 @@ fn main() {
             EncryptCommands::Additional => gen_additional_fixtures(),
             EncryptCommands::MultiRecipient => gen_multi_recipient_fixtures(),
         },
+        Commands::Ocsp => gen_ocsp_stapling_fixtures(),
         Commands::All => run_all(),
     }
 }
@@ -1520,5 +1523,692 @@ fn load_cert_der_for_fixtures(path: &str) -> Vec<u8> {
     match pem::parse(&bytes) {
         Ok(p) => p.into_contents(),
         Err(_) => bytes,
+    }
+}
+
+// Stapled-OCSP fixtures: a root CA that issued an S/MIME leaf, with an OCSP staple
+// in SignedData.crls. Dates are fixed so fixtures are reproducible.
+use smime::cryptography_x509::certificate::Certificate as FixtureCert;
+use smime::cryptography_x509::extensions::{BasicConstraints, Extension};
+use smime::cryptography_x509::ocsp_req::CertID;
+use smime::cryptography_x509::ocsp_resp::{
+    BasicOCSPResponse, CertStatus, OCSPResponse, ResponderId, Response, ResponseBytes, ResponseData, RevokedInfo, SingleResponse,
+};
+
+fn rsa_signer(key_path: &str) -> impl Fn(&[u8]) -> Vec<u8> {
+    use rsa::pkcs8::DecodePrivateKey;
+    let key_pem = fs::read_to_string(key_path).unwrap_or_else(|_| panic!("read {}", key_path));
+    let sk = rsa::RsaPrivateKey::from_pkcs8_pem(&key_pem).expect("parse RSA key");
+    let signer = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(sk);
+    move |data: &[u8]| {
+        use signature::{SignatureEncoding, Signer};
+        signer.sign(data).to_vec()
+    }
+}
+
+/// Hash algorithm a fixture's OCSP `CertID` is built with.
+#[derive(Clone, Copy)]
+enum CertIdHash {
+    Sha1,
+    Sha256,
+}
+
+fn rsa_sha256_alg() -> AlgorithmIdentifier<'static> {
+    AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::RsaWithSha256(Some(())) }
+}
+
+fn validity_utc(nb: (u16, u8, u8), na: (u16, u8, u8)) -> Validity {
+    let mk = |(y, m, d): (u16, u8, u8)| Time::UtcTime(asn1::UtcTime::new(asn1::DateTime::new(y, m, d, 0, 0, 0).unwrap()).unwrap());
+    Validity { not_before: mk(nb), not_after: mk(na) }
+}
+
+fn gen_time(y: u16, m: u8, d: u8) -> asn1::X509GeneralizedTime {
+    asn1::X509GeneralizedTime::new(asn1::DateTime::new(y, m, d, 0, 0, 0).unwrap()).unwrap()
+}
+
+fn spki_der_of(cert_pem_path: &str) -> Vec<u8> {
+    let cert_der = load_cert_der_for_fixtures(cert_pem_path);
+    let cert: FixtureCert<'_> = asn1::parse_single(&cert_der).unwrap();
+    asn1::write_single(&cert.tbs_cert.spki).unwrap()
+}
+
+fn pubkey_bits_of(cert_pem_path: &str) -> Vec<u8> {
+    let cert_der = load_cert_der_for_fixtures(cert_pem_path);
+    let cert: FixtureCert<'_> = asn1::parse_single(&cert_der).unwrap();
+    cert.tbs_cert.spki.subject_public_key.as_bytes().to_vec()
+}
+
+// Extension value (extnValue inner DER) builders.
+fn ev_basic_constraints_ca() -> Vec<u8> {
+    asn1::write_single(&BasicConstraints { ca: true, path_length: None }).unwrap()
+}
+fn ev_key_usage_ca() -> Vec<u8> {
+    // digitalSignature (bit 0) + keyCertSign (bit 5) -> 0x84, with 2 unused trailing bits.
+    asn1::write_single(&asn1::BitString::new(&[0x84], 2).unwrap()).unwrap()
+}
+fn ev_eku(oids: &[asn1::ObjectIdentifier]) -> Vec<u8> {
+    asn1::write_single(&asn1::SequenceOfWriter::new(oids.to_vec())).unwrap()
+}
+fn ev_null() -> Vec<u8> {
+    asn1::write_single(&()).unwrap()
+}
+
+/// Build an X.509v3 certificate, reusing the public key from `spki_der` and signing with `sign`.
+fn build_cert(
+    issuer_name_der: &[u8],
+    subject_cn: &str,
+    spki_der: &[u8],
+    validity: Validity,
+    extensions: &[(asn1::ObjectIdentifier, bool, Vec<u8>)],
+    sign: &dyn Fn(&[u8]) -> Vec<u8>,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let mut serial = random_bytes::<16>().to_vec();
+    serial[0] &= 0x7F;
+    if serial[0] == 0 {
+        serial[0] = 1;
+    }
+
+    let subject_name_der = build_name_der(subject_cn);
+    let sig_alg = rsa_sha256_alg();
+
+    let spki_with_tlv: WithTlv<'_, SubjectPublicKeyInfo<'_>> = asn1::parse_single(spki_der).unwrap();
+    let issuer: name::NameReadable<'_> = asn1::parse_single(issuer_name_der).unwrap();
+    let subject: name::NameReadable<'_> = asn1::parse_single(&subject_name_der).unwrap();
+
+    let ext_objs: Vec<Extension<'_>> =
+        extensions.iter().map(|(oid, crit, val)| Extension { extn_id: oid.clone(), critical: *crit, extn_value: val.as_slice() }).collect();
+    let raw_extensions = Asn1ReadableOrWritable::new_write(asn1::SequenceOfWriter::new(ext_objs));
+
+    let tbs = TbsCertificate {
+        version: 2,
+        serial: asn1::BigInt::new(&serial).unwrap(),
+        signature_alg: sig_alg.clone(),
+        issuer: Asn1ReadableOrWritable::new_read(issuer),
+        validity,
+        subject: Asn1ReadableOrWritable::new_read(subject),
+        spki: spki_with_tlv,
+        issuer_unique_id: None,
+        subject_unique_id: None,
+        raw_extensions: Some(raw_extensions),
+    };
+
+    let tbs_der = asn1::write_single(&tbs).unwrap();
+    let signature_bytes = sign(&tbs_der);
+    let sig_bs = asn1::OwnedBitString::new(signature_bytes, 0).unwrap();
+
+    let tbs_tlv: asn1::Tlv<'_> = asn1::parse_single(&tbs_der).unwrap();
+    let cert_der = asn1::write_single(&asn1::SequenceWriter::new(&|w| -> asn1::WriteResult {
+        w.write_element(&tbs_tlv)?;
+        w.write_element(&sig_alg)?;
+        w.write_element(&sig_bs)?;
+        Ok(())
+    }))
+    .unwrap();
+
+    (cert_der, serial, subject_name_der)
+}
+
+/// Build a DER `OCSPResponse` carrying one SingleResponse for the leaf.
+#[allow(clippy::too_many_arguments)]
+fn build_ocsp_response(
+    leaf_issuer_name_der: &[u8],
+    issuer_pubkey_bits: &[u8],
+    leaf_serial: &[u8],
+    responder_name_der: &[u8],
+    good: bool,
+    this_update: (u16, u8, u8),
+    next_update: Option<(u16, u8, u8)>,
+    embedded_certs: Vec<FixtureCert<'_>>,
+    cert_id_hash: CertIdHash,
+    ocsp_sign: &dyn Fn(&[u8]) -> Vec<u8>,
+) -> Vec<u8> {
+    let (hash_alg_params, issuer_name_hash, issuer_key_hash) = match cert_id_hash {
+        CertIdHash::Sha1 => (
+            AlgorithmParameters::Sha1(Some(())),
+            smime::ocsp::sha1_of(leaf_issuer_name_der).to_vec(),
+            smime::ocsp::sha1_of(issuer_pubkey_bits).to_vec(),
+        ),
+        CertIdHash::Sha256 => (
+            AlgorithmParameters::Sha256(Some(())),
+            smime::ocsp::sha256_of(leaf_issuer_name_der).to_vec(),
+            smime::ocsp::sha256_of(issuer_pubkey_bits).to_vec(),
+        ),
+    };
+
+    let cert_id = CertID {
+        hash_algorithm: AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: hash_alg_params },
+        issuer_name_hash: &issuer_name_hash,
+        issuer_key_hash: &issuer_key_hash,
+        serial_number: asn1::BigInt::new(leaf_serial).unwrap(),
+    };
+
+    let revoked_info = RevokedInfo { revocation_time: gen_time(this_update.0, this_update.1, this_update.2), revocation_reason: None };
+    let single = SingleResponse {
+        cert_id,
+        cert_status: if good { CertStatus::Good(()) } else { CertStatus::Revoked(revoked_info) },
+        this_update: gen_time(this_update.0, this_update.1, this_update.2),
+        next_update: next_update.map(|(y, m, d)| gen_time(y, m, d)),
+        raw_single_extensions: None,
+    };
+
+    let responder_name: name::NameReadable<'_> = asn1::parse_single(responder_name_der).unwrap();
+    let tbs_response_data = ResponseData {
+        version: 0,
+        responder_id: ResponderId::ByName(Asn1ReadableOrWritable::new_read(responder_name)),
+        produced_at: gen_time(this_update.0, this_update.1, this_update.2),
+        responses: Asn1ReadableOrWritable::new_write(asn1::SequenceOfWriter::new(vec![single])),
+        raw_response_extensions: None,
+    };
+
+    let tbs_der = asn1::write_single(&tbs_response_data).unwrap();
+    let signature = ocsp_sign(&tbs_der);
+
+    let certs =
+        if embedded_certs.is_empty() { None } else { Some(Asn1ReadableOrWritable::new_write(asn1::SequenceOfWriter::new(embedded_certs))) };
+
+    let basic = BasicOCSPResponse {
+        tbs_response_data,
+        signature_algorithm: rsa_sha256_alg(),
+        signature: asn1::BitString::new(&signature, 0).unwrap(),
+        certs,
+    };
+
+    let ocsp_resp = OCSPResponse {
+        response_status: asn1::Enumerated::new(0),
+        response_bytes: Some(ResponseBytes {
+            response_type: asn1::DefinedByMarker::marker(),
+            response: Response::Basic(asn1::OctetStringEncoded::new(basic)),
+        }),
+    };
+
+    asn1::write_single(&ocsp_resp).unwrap()
+}
+
+/// Build a CMS SignedData: leaf signs `content`; embeds leaf+root+extra certs (responder or
+/// intermediate) and the OCSP staples.
+#[allow(clippy::too_many_arguments)]
+fn build_stapled_cms(
+    leaf_der: &[u8],
+    root_der: &[u8],
+    extra_cert_ders: &[&[u8]],
+    leaf_serial: &[u8],
+    signer_issuer_name_der: &[u8],
+    ocsp_resp_ders: &[&[u8]],
+    content: &[u8],
+    leaf_sign: &dyn Fn(&[u8]) -> Vec<u8>,
+) -> Vec<u8> {
+    let digest_alg = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Sha256(Some(())) };
+    let sig_alg = rsa_sha256_alg();
+    let content_hash = {
+        use sha2::Digest;
+        sha2::Sha256::digest(content).to_vec()
+    };
+
+    let data_oid_der = asn1::write_single(&PKCS7_DATA_OID).unwrap();
+    let data_oid_tlv: asn1::Tlv<'_> = asn1::parse_single(&data_oid_der).unwrap();
+    let content_type_attr = csr::Attribute {
+        type_id: oid::CONTENT_TYPE_OID,
+        values: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new([RawTlv::new(data_oid_tlv.tag(), data_oid_tlv.data())])),
+    };
+    let digest_octet_tag = <&[u8] as asn1::SimpleAsn1Readable>::TAG;
+    let message_digest_attr = csr::Attribute {
+        type_id: oid::MESSAGE_DIGEST_OID,
+        values: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new([RawTlv::new(digest_octet_tag, &content_hash)])),
+    };
+    let attrs_set = asn1::SetOfWriter::new(vec![content_type_attr, message_digest_attr]);
+    let attrs_set_der = asn1::write_single(&attrs_set).unwrap();
+    let attrs_signature = leaf_sign(&attrs_set_der);
+    let parsed_attrs: asn1::SetOf<'_, csr::Attribute<'_>> = asn1::parse_single(&attrs_set_der).unwrap();
+
+    let leaf_cert: FixtureCert<'_> = asn1::parse_single(leaf_der).unwrap();
+    let root_cert: FixtureCert<'_> = asn1::parse_single(root_der).unwrap();
+    let signer_issuer: name::NameReadable<'_> = asn1::parse_single(signer_issuer_name_der).unwrap();
+
+    let signer_info = SignerInfo {
+        version: 1,
+        issuer_and_serial_number: SignerIdentifier::IssuerAndSerialNumber(IssuerAndSerialNumber {
+            issuer: Asn1ReadableOrWritable::new_read(signer_issuer),
+            serial_number: asn1::BigInt::new(leaf_serial).unwrap(),
+        }),
+        digest_algorithm: digest_alg.clone(),
+        authenticated_attributes: Some(Asn1ReadableOrWritable::new_read(parsed_attrs)),
+        digest_encryption_algorithm: sig_alg,
+        encrypted_digest: &attrs_signature,
+        unauthenticated_attributes: None,
+    };
+
+    let mut cert_choices = vec![CertificateChoices::Certificate(leaf_cert), CertificateChoices::Certificate(root_cert)];
+    for &der in extra_cert_ders {
+        cert_choices.push(CertificateChoices::Certificate(asn1::parse_single::<FixtureCert<'_>>(der).unwrap()));
+    }
+
+    let crl_choices: Vec<RevocationInfoChoice<'_>> = ocsp_resp_ders
+        .iter()
+        .map(|&der| {
+            let ocsp_tlv: asn1::Tlv<'_> = asn1::parse_single(der).unwrap();
+            RevocationInfoChoice::Other(OtherRevocationInfoFormat { other_rev_info_format: oid::RI_OCSP_OID, other_rev_info: ocsp_tlv })
+        })
+        .collect();
+
+    let digest_algs = [digest_alg];
+    let signer_infos = [signer_info];
+
+    let signed_data = SignedData {
+        version: 5,
+        digest_algorithms: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(&digest_algs)),
+        content_info: ContentInfo {
+            content_type: asn1::DefinedByMarker::marker(),
+            content: Content::Data(Some(asn1::Explicit::new(content))),
+        },
+        certificates: Some(Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(cert_choices))),
+        crls: Some(Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(crl_choices))),
+        signer_infos: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(&signer_infos)),
+    };
+
+    let content_info = ContentInfo {
+        content_type: asn1::DefinedByMarker::marker(),
+        content: Content::SignedData(asn1::Explicit::new(Box::new(signed_data))),
+    };
+
+    asn1::write_single(&content_info).unwrap()
+}
+
+fn write_pem_cert(dir: &std::path::Path, name: &str, der: &[u8]) -> PathBuf {
+    let path = dir.join(name);
+    let config = pem::EncodeConfig::new().set_line_ending(pem::LineEnding::LF);
+    fs::write(&path, pem::encode_config(&pem::Pem::new("CERTIFICATE", der.to_vec()), config)).unwrap();
+    path
+}
+
+/// Produce a DER `OCSPResponse` for `leaf_serial` with `openssl ocsp` acting as an independent
+/// responder: an `index.txt` marks the serial valid or revoked, then the response is signed by
+/// `signer_cert`/`signer_key` (the issuer itself, or a delegated responder). `-rmd sha256` keeps
+/// the response signature off SHA-1 (rejected by check_algorithm_permitted); `-ndays 36500` puts
+/// `nextUpdate` far enough out that the committed fixture never goes stale.
+fn openssl_ocsp_response(
+    dir: &std::path::Path,
+    ca_pem: &std::path::Path,
+    leaf_pem: &std::path::Path,
+    leaf_serial: &[u8],
+    leaf_not_after: &str,
+    revoked: bool,
+    signer_cert: &std::path::Path,
+    signer_key: &str,
+) -> Vec<u8> {
+    use std::process::Command;
+    let serial: String = leaf_serial.iter().map(|b| format!("{b:02X}")).collect();
+    let line = if revoked {
+        format!("R\t{leaf_not_after}\t240115000000Z\t{serial}\tunknown\t/CN=leaf\n")
+    } else {
+        format!("V\t{leaf_not_after}\t\t{serial}\tunknown\t/CN=leaf\n")
+    };
+    let index = dir.join("index.txt");
+    fs::write(&index, line).unwrap();
+    let req = dir.join("req.der");
+    let resp = dir.join("resp.der");
+
+    let out = Command::new("openssl")
+        .arg("ocsp")
+        .arg("-issuer")
+        .arg(ca_pem)
+        .arg("-cert")
+        .arg(leaf_pem)
+        .arg("-reqout")
+        .arg(&req)
+        .arg("-no_nonce")
+        .output()
+        .expect("run openssl ocsp -reqout");
+    assert!(out.status.success(), "openssl ocsp -reqout failed: {}", String::from_utf8_lossy(&out.stderr));
+
+    let out = Command::new("openssl")
+        .arg("ocsp")
+        .arg("-index")
+        .arg(&index)
+        .arg("-CA")
+        .arg(ca_pem)
+        .arg("-rsigner")
+        .arg(signer_cert)
+        .arg("-rkey")
+        .arg(signer_key)
+        .arg("-rmd")
+        .arg("sha256")
+        .arg("-reqin")
+        .arg(&req)
+        .arg("-respout")
+        .arg(&resp)
+        .arg("-ndays")
+        .arg("36500")
+        .arg("-no_nonce")
+        .output()
+        .expect("run openssl ocsp responder");
+    assert!(out.status.success(), "openssl ocsp responder failed: {}", String::from_utf8_lossy(&out.stderr));
+
+    fs::read(&resp).unwrap()
+}
+
+fn gen_ocsp_stapling_fixtures() {
+    fs::create_dir_all("tests/ocsp").unwrap();
+
+    // Keys: root CA = test_rsa_sign, leaf & delegated responder = test_rsa.
+    let root_sign = rsa_signer("tests/keys/test_rsa_sign.key");
+    let leaf_sign = rsa_signer("tests/keys/test_rsa.key");
+    let root_spki = spki_der_of("tests/keys/test_rsa_sign.pem");
+    let root_pubkey_bits = pubkey_bits_of("tests/keys/test_rsa_sign.pem");
+    let leaf_spki = spki_der_of("tests/keys/test_rsa.pem");
+    let leaf_pubkey_bits = pubkey_bits_of("tests/keys/test_rsa.pem");
+
+    // Self-signed root CA, valid 2024-01-01 .. 2035-01-01.
+    let root_name_der = build_name_der("Test Stapling Root CA");
+    let (root_der, _root_serial, root_subject_der) = build_cert(
+        &root_name_der,
+        "Test Stapling Root CA",
+        &root_spki,
+        validity_utc((2024, 1, 1), (2035, 1, 1)),
+        &[(oid::BASIC_CONSTRAINTS_OID, true, ev_basic_constraints_ca()), (oid::KEY_USAGE_OID, true, ev_key_usage_ca())],
+        &root_sign,
+    );
+    // Trust anchor for the tests, include_str!'d by tests/ocsp.rs and tests/ocsp_interop.rs.
+    write_pem_cert(std::path::Path::new("tests/ocsp"), "root_ca.pem", &root_der);
+
+    // Valid leaf (2024-01-01 .. 2035-01-01), emailProtection, issued by root.
+    let (leaf_der, leaf_serial, _leaf_subject_der) = build_cert(
+        &root_subject_der,
+        "Anu Allkirjastaja",
+        &leaf_spki,
+        validity_utc((2024, 1, 1), (2035, 1, 1)),
+        &[(oid::EXTENDED_KEY_USAGE_OID, false, ev_eku(&[oid::EKU_EMAIL_PROTECTION_OID]))],
+        &root_sign,
+    );
+
+    // Expired leaf (2024-01-01 .. 2024-02-01), same key/issuer, for the regression below.
+    let (expired_leaf_der, expired_leaf_serial, _) = build_cert(
+        &root_subject_der,
+        "Anu Allkirjastaja",
+        &leaf_spki,
+        validity_utc((2024, 1, 1), (2024, 2, 1)),
+        &[(oid::EXTENDED_KEY_USAGE_OID, false, ev_eku(&[oid::EKU_EMAIL_PROTECTION_OID]))],
+        &root_sign,
+    );
+
+    let content = b"Content-Type: text/plain\r\n\r\nStapled OCSP test\r\n";
+    let this_update = (2024, 1, 15);
+    // nextUpdate within the issuer/responder validity window, so staples that should stay
+    // honored do not trip the relying-party freshness cap for nextUpdate-less responses.
+    let next_update = Some((2035, 1, 1));
+
+    let write = |name: &str, cms: &[u8]| write_fixture_eml(format!("tests/ocsp/{name}.eml"), cms, "Test Stapled OCSP", "signed-data");
+
+    // 1. Good OCSP signed directly by the issuing root -> recorded as good, stays trusted.
+    {
+        let ocsp = build_ocsp_response(
+            &root_subject_der,
+            &root_pubkey_bits,
+            &leaf_serial,
+            &root_subject_der,
+            true,
+            this_update,
+            next_update,
+            vec![],
+            CertIdHash::Sha1,
+            &root_sign,
+        );
+        let cms = build_stapled_cms(&leaf_der, &root_der, &[], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
+        write("stapled_issuer_good", &cms);
+    }
+
+    // 2. Revoked OCSP signed by the issuing root -> certificate invalid even though valid.
+    {
+        let ocsp = build_ocsp_response(
+            &root_subject_der,
+            &root_pubkey_bits,
+            &leaf_serial,
+            &root_subject_der,
+            false,
+            this_update,
+            next_update,
+            vec![],
+            CertIdHash::Sha1,
+            &root_sign,
+        );
+        let cms = build_stapled_cms(&leaf_der, &root_der, &[], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
+        write("stapled_issuer_revoked", &cms);
+    }
+
+    // 3. Good OCSP signed by a delegated, authorized responder -> recorded as good.
+    {
+        let (responder_der, _rs, responder_subject_der) = build_cert(
+            &root_subject_der,
+            "Test OCSP Responder",
+            &leaf_spki,
+            validity_utc((2024, 1, 1), (2035, 1, 1)),
+            &[(oid::EXTENDED_KEY_USAGE_OID, false, ev_eku(&[oid::EKU_OCSP_SIGNING_OID])), (oid::OCSP_NO_CHECK_OID, false, ev_null())],
+            &root_sign,
+        );
+        let responder_cert: FixtureCert<'_> = asn1::parse_single(&responder_der).unwrap();
+        let ocsp = build_ocsp_response(
+            &root_subject_der,
+            &root_pubkey_bits,
+            &leaf_serial,
+            &responder_subject_der,
+            true,
+            this_update,
+            next_update,
+            vec![responder_cert],
+            CertIdHash::Sha1,
+            &leaf_sign,
+        );
+        let cms =
+            build_stapled_cms(&leaf_der, &root_der, &[&responder_der], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
+        write("stapled_responder_good", &cms);
+    }
+
+    // 4. Forged revocation: a Revoked OCSP with a correct CertID (real issuer name+key+serial)
+    //    that claims to come from the root but is signed with the attacker's key. The signature
+    //    is pinned to the trust-anchored issuer's key, so verification fails and it is ignored.
+    {
+        let ocsp = build_ocsp_response(
+            &root_subject_der,
+            &root_pubkey_bits,
+            &leaf_serial,
+            &root_subject_der,
+            false,
+            this_update,
+            None,
+            vec![],
+            CertIdHash::Sha1,
+            &leaf_sign,
+        );
+        let cms = build_stapled_cms(&leaf_der, &root_der, &[], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
+        write("stapled_forged_revoked", &cms);
+    }
+
+    // 4b. CertID mismatch: a Revoked OCSP validly signed by the real root, but whose CertID
+    //     issuer_key_hash is computed over the wrong key. It does not identify this leaf/issuer
+    //     pair, so it is discarded at certID matching before the signature is ever checked.
+    {
+        let ocsp = build_ocsp_response(
+            &root_subject_der,
+            &leaf_pubkey_bits,
+            &leaf_serial,
+            &root_subject_der,
+            false,
+            this_update,
+            None,
+            vec![],
+            CertIdHash::Sha1,
+            &root_sign,
+        );
+        let cms = build_stapled_cms(&leaf_der, &root_der, &[], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
+        write("stapled_certid_mismatch_revoked", &cms);
+    }
+
+    // 5. Expired leaf with a Good staple -> the certificate is untrusted.
+    {
+        let ocsp = build_ocsp_response(
+            &root_subject_der,
+            &root_pubkey_bits,
+            &expired_leaf_serial,
+            &root_subject_der,
+            true,
+            this_update,
+            None,
+            vec![],
+            CertIdHash::Sha1,
+            &root_sign,
+        );
+        let cms =
+            build_stapled_cms(&expired_leaf_der, &root_der, &[], &expired_leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
+        write("expired_leaf_good_staple", &cms);
+    }
+
+    // 6. Good staple whose nextUpdate is long past -> the stale response is ignored
+    //    (not accepted as a current "good" signal); the leaf stays trusted with no revocation status.
+    {
+        let ocsp = build_ocsp_response(
+            &root_subject_der,
+            &root_pubkey_bits,
+            &leaf_serial,
+            &root_subject_der,
+            true,
+            this_update,
+            Some((2024, 1, 16)),
+            vec![],
+            CertIdHash::Sha1,
+            &root_sign,
+        );
+        let cms = build_stapled_cms(&leaf_der, &root_der, &[], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
+        write("stapled_good_stale_response", &cms);
+    }
+
+    // 6b. Good staple with no nextUpdate and a thisUpdate well over 7 days old -> the relying-party
+    //     freshness cap for nextUpdate-less responses expires it, so it is ignored (no status).
+    {
+        let ocsp = build_ocsp_response(
+            &root_subject_der,
+            &root_pubkey_bits,
+            &leaf_serial,
+            &root_subject_der,
+            true,
+            this_update,
+            None,
+            vec![],
+            CertIdHash::Sha1,
+            &root_sign,
+        );
+        let cms = build_stapled_cms(&leaf_der, &root_der, &[], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
+        write("stapled_good_no_next_update", &cms);
+    }
+
+    // 7. Good OCSP signed by the issuing root, but with a SHA-256 CertID (RFC 6960 allows any
+    //    hash). The staple must still be matched and recorded as good, not silently ignored.
+    {
+        let ocsp = build_ocsp_response(
+            &root_subject_der,
+            &root_pubkey_bits,
+            &leaf_serial,
+            &root_subject_der,
+            true,
+            this_update,
+            next_update,
+            vec![],
+            CertIdHash::Sha256,
+            &root_sign,
+        );
+        let cms = build_stapled_cms(&leaf_der, &root_der, &[], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
+        write("stapled_issuer_good_sha256_certid", &cms);
+    }
+
+    // 8. Three-level chain root -> intermediate -> leaf: the leaf staples Good (signed by the
+    //    intermediate) but the intermediate staples Revoked (signed by the root). The revocation
+    //    must be promoted over the leaf's own Good status and the error must name the intermediate.
+    {
+        let (intermediate_der, intermediate_serial, intermediate_subject_der) = build_cert(
+            &root_subject_der,
+            "Test Stapling Intermediate CA",
+            &leaf_spki,
+            validity_utc((2024, 1, 1), (2035, 1, 1)),
+            &[(oid::BASIC_CONSTRAINTS_OID, true, ev_basic_constraints_ca()), (oid::KEY_USAGE_OID, true, ev_key_usage_ca())],
+            &root_sign,
+        );
+        let (chain_leaf_der, chain_leaf_serial, _) = build_cert(
+            &intermediate_subject_der,
+            "Anu Allkirjastaja",
+            &leaf_spki,
+            validity_utc((2024, 1, 1), (2035, 1, 1)),
+            &[(oid::EXTENDED_KEY_USAGE_OID, false, ev_eku(&[oid::EKU_EMAIL_PROTECTION_OID]))],
+            &leaf_sign,
+        );
+        let leaf_good = build_ocsp_response(
+            &intermediate_subject_der,
+            &leaf_pubkey_bits,
+            &chain_leaf_serial,
+            &intermediate_subject_der,
+            true,
+            this_update,
+            next_update,
+            vec![],
+            CertIdHash::Sha1,
+            &leaf_sign,
+        );
+        let intermediate_revoked = build_ocsp_response(
+            &root_subject_der,
+            &root_pubkey_bits,
+            &intermediate_serial,
+            &root_subject_der,
+            false,
+            this_update,
+            next_update,
+            vec![],
+            CertIdHash::Sha1,
+            &root_sign,
+        );
+        let cms = build_stapled_cms(
+            &chain_leaf_der,
+            &root_der,
+            &[&intermediate_der],
+            &chain_leaf_serial,
+            &intermediate_subject_der,
+            &[&leaf_good, &intermediate_revoked],
+            content,
+            &leaf_sign,
+        );
+        write("stapled_intermediate_revoked", &cms);
+    }
+
+    // OpenSSL interop (independent oracle): same root/leaf, but the OCSP responses are produced by
+    // `openssl ocsp` instead of build_ocsp_response, then embedded and validated by our code.
+    {
+        let dir = std::env::temp_dir().join("rust_smime_ocsp_interop");
+        fs::create_dir_all(&dir).unwrap();
+        let ca_pem = write_pem_cert(&dir, "root.pem", &root_der);
+        let leaf_pem = write_pem_cert(&dir, "leaf.pem", &leaf_der);
+        let leaf_not_after = "350101000000Z"; // leaf validity not_after, 2035-01-01
+
+        // OpenSSL good/revoked OCSP signed directly by the issuing root.
+        let ocsp =
+            openssl_ocsp_response(&dir, &ca_pem, &leaf_pem, &leaf_serial, leaf_not_after, false, &ca_pem, "tests/keys/test_rsa_sign.key");
+        let cms = build_stapled_cms(&leaf_der, &root_der, &[], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
+        write("openssl_issuer_good", &cms);
+
+        let ocsp =
+            openssl_ocsp_response(&dir, &ca_pem, &leaf_pem, &leaf_serial, leaf_not_after, true, &ca_pem, "tests/keys/test_rsa_sign.key");
+        let cms = build_stapled_cms(&leaf_der, &root_der, &[], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
+        write("openssl_issuer_revoked", &cms);
+
+        // OpenSSL good OCSP signed by a delegated, authorized responder (EKU ocsp-signing + ocsp-nocheck).
+        let (responder_der, _rs, _rsubj) = build_cert(
+            &root_subject_der,
+            "Test OCSP Responder",
+            &leaf_spki,
+            validity_utc((2024, 1, 1), (2035, 1, 1)),
+            &[(oid::EXTENDED_KEY_USAGE_OID, false, ev_eku(&[oid::EKU_OCSP_SIGNING_OID])), (oid::OCSP_NO_CHECK_OID, false, ev_null())],
+            &root_sign,
+        );
+        let responder_pem = write_pem_cert(&dir, "responder.pem", &responder_der);
+        let ocsp =
+            openssl_ocsp_response(&dir, &ca_pem, &leaf_pem, &leaf_serial, leaf_not_after, false, &responder_pem, "tests/keys/test_rsa.key");
+        let cms =
+            build_stapled_cms(&leaf_der, &root_der, &[&responder_der], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
+        write("openssl_responder_good", &cms);
     }
 }

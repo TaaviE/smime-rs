@@ -2,6 +2,7 @@ pub mod types;
 pub mod utils;
 
 pub mod cms_utils;
+pub mod ocsp;
 
 #[path = "../vendor/pyca-cryptography/cryptography-x509/lib.rs"]
 pub mod cryptography_x509;
@@ -862,7 +863,7 @@ fn prepare_signer<'a>(
                     has_content_type_attr = true;
                     let values = attr.values.unwrap_read().clone().collect::<Vec<_>>();
                     if values.len() == 1 {
-                        if let Ok(oid) = asn1::parse_single::<asn1::ObjectIdentifier>(values[0].full_data()) {
+                        if let Ok(oid) = asn1::parse_single::<ObjectIdentifier>(values[0].full_data()) {
                             if oid != PKCS7_DATA_OID {
                                 result.failures.push(SmimeError::ContentTypeMismatch { idx });
                             }
@@ -944,14 +945,67 @@ fn prepare_signer<'a>(
     Some((signing_time, candidates))
 }
 
+/// SHA-256 fingerprints of the CMS certificates that make up a verified chain.
+fn verified_chain_fingerprints(chain: &[OwnedCertificate], certs: &[Certificate<'_>]) -> Vec<String> {
+    chain
+        .iter()
+        .filter_map(|c| {
+            let c = c.borrow_dependent();
+            certs
+                .iter()
+                .find(|p7| p7.issuer() == c.issuer() && p7.tbs_cert.serial == c.tbs_cert.serial)
+                .and_then(|p7| sha256_fingerprint_hex(p7))
+        })
+        .collect()
+}
+
+fn intermediaries_of<'a>(signer_leaf: &Certificate<'_>, certs: &[Certificate<'a>]) -> Vec<Certificate<'a>> {
+    certs.iter().filter(|c| *c != signer_leaf && c.issuer() != c.subject()).cloned().collect()
+}
+
+/// Read stapled OCSP signals along the verified chain. Each cert is checked against its
+/// own issuer (the next chain entry); the trust anchor (last entry) is never checked.
+/// Returns the leaf's status, except that any `revoked` cert in the chain makes the whole
+/// chain `Revoked`. A revoked cert (leaf or intermediate, which invalidates the certificate)
+/// is pushed to `errors`; good/unknown statuses are not reported. `None` when nothing matched.
+fn apply_stapled_ocsp(
+    verified_chain: &cryptography_x509_verify::PyVerifiedEmail,
+    staples: &[ocsp::StapledOcsp<'_>],
+    errors: &mut Vec<SmimeError>,
+) -> Option<ocsp::StapledStatus> {
+    if staples.is_empty() {
+        return None;
+    }
+    let chain = &verified_chain.chain;
+    let now = Utc::now();
+    let mut leaf_status = None;
+    let mut any_revoked = false;
+    for i in 0..chain.len().saturating_sub(1) {
+        let subject = chain[i].borrow_dependent();
+        let issuer = chain[i + 1].borrow_dependent();
+        let Some(status) = ocsp::stapled_status_for(staples, subject, issuer, now) else {
+            continue;
+        };
+        if status == ocsp::StapledStatus::Revoked {
+            any_revoked = true;
+            errors.push(SmimeError::StapledOcspRevoked { subject: policy::extension::dn_to_string(subject.subject()) });
+        }
+        if i == 0 {
+            leaf_status = Some(status);
+        }
+    }
+    if any_revoked { Some(ocsp::StapledStatus::Revoked) } else { leaf_status }
+}
+
 fn validate_chain(
     signer_leaf: &Certificate<'_>,
     certs: &[Certificate<'_>],
     verifier: &cryptography_x509_verify::PyEmailVerifier<'_>,
+    staples: &[ocsp::StapledOcsp<'_>],
     idx: usize,
-) -> (Vec<String>, bool, Vec<SmimeError>) {
+) -> (Vec<String>, bool, Option<ocsp::StapledStatus>, Vec<SmimeError>) {
     let fp = sha256_fingerprint_hex(signer_leaf).unwrap_or_else(|| "<encoding error>".to_string());
-    let intermediaries: Vec<Certificate<'_>> = certs.iter().filter(|c| *c != signer_leaf && c.issuer() != c.subject()).cloned().collect();
+    let intermediaries = intermediaries_of(signer_leaf, certs);
     if !intermediaries.is_empty() {
         console_log!("Amount of found intermediaries: {:?}", intermediaries.len());
         for intermediary in &intermediaries {
@@ -961,20 +1015,13 @@ fn validate_chain(
 
     match verifier.verify(signer_leaf.clone(), intermediaries) {
         Ok(verified) => {
-            let chain = verified
-                .chain
-                .iter()
-                .filter_map(|c| {
-                    let c = c.borrow_dependent();
-                    certs
-                        .iter()
-                        .find(|p7| p7.issuer() == c.issuer() && p7.tbs_cert.serial == c.tbs_cert.serial)
-                        .and_then(|p7| sha256_fingerprint_hex(p7))
-                })
-                .collect();
-            (chain, true, Vec::new())
+            let chain = verified_chain_fingerprints(&verified.chain, certs);
+            let mut failures = Vec::new();
+            let revocation_status = apply_stapled_ocsp(&verified, staples, &mut failures);
+            let trusted = revocation_status != Some(ocsp::StapledStatus::Revoked);
+            (chain, trusted, revocation_status, failures)
         }
-        Err(e) => (Vec::new(), false, vec![SmimeError::ChainValidation { fp, idx, err: e.to_string() }]),
+        Err(e) => (Vec::new(), false, None, vec![SmimeError::ChainValidation { fp, idx, err: e.to_string() }]),
     }
 }
 
@@ -1298,6 +1345,7 @@ pub(crate) fn verify_signed_data(
             Some(v) => v,
             None => return,
         };
+    let staples = ocsp::extract_stapled_ocsp(signed_data);
     let builder = match build_policy_builder(&ca_certs) {
         Ok(b) => b,
         Err(e) => {
@@ -1361,9 +1409,10 @@ pub(crate) fn verify_signed_data(
             checks.rfc9788_hp = rfc9788_hp;
         }
         let mut entry = build_signer_entry(signer_leaf, signer, signing_time, checks, &trust_store_label, outer_date);
-        let (chain, cert_trusted, chain_failures) = validate_chain(signer_leaf, &certs, &verifier, idx);
+        let (chain, cert_trusted, revocation_status, chain_failures) = validate_chain(signer_leaf, &certs, &verifier, &staples, idx);
         entry.chain = chain;
         entry.validation_details.certificate_trusted_valid = cert_trusted;
+        entry.validation_details.revocation_status = revocation_status;
         result.failures.extend(chain_failures);
         let crypto_valid = entry.validation_details.checks.signature_matches_signed_data
             && (entry.validation_details.checks.message_digest_matches_content || !has_signed_attrs);

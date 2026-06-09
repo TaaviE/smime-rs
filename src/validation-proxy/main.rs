@@ -6,13 +6,6 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::Duration;
 
-// TODO: Move into utils
-fn asn1_to_chrono(dt: &asn1::DateTime) -> Option<chrono::DateTime<chrono::Utc>> {
-    chrono::Utc
-        .with_ymd_and_hms(dt.year() as i32, dt.month() as u32, dt.day() as u32, dt.hour() as u32, dt.minute() as u32, dt.second() as u32)
-        .single()
-}
-
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -21,18 +14,19 @@ struct Cli {
     bind: String,
 }
 
-use chrono::TimeZone;
 use smime::cryptography_x509::certificate::Certificate;
 use smime::cryptography_x509::common::{AlgorithmIdentifier, AlgorithmParameters, Asn1Read, Asn1ReadableOrWritable};
 use smime::cryptography_x509::crl::CertificateRevocationList;
 use smime::cryptography_x509::extensions::{AuthorityKeyIdentifier, Extension, Extensions};
-use smime::cryptography_x509::name::Name;
 use smime::cryptography_x509::ocsp_req::{CertID, OCSPRequest, Request, TBSRequest};
-use smime::cryptography_x509::ocsp_resp::{BasicOCSPResponse, CertStatus, OCSPResponse, ResponderId, Response, SingleResponse};
+use smime::cryptography_x509::ocsp_resp::{CertStatus, OCSPResponse, Response, SingleResponse};
 use smime::cryptography_x509::oid;
-
 use smime::cryptography_x509_verification::ops::CryptoOps;
+use smime::ocsp::{
+    OcspError, cert_id_matches, check_aki_matches_issuer, check_algorithm_permitted, get_ski, names_match, sha1_of, verify_ocsp_signature,
+};
 use smime::types::KeyCryptoOps;
+use smime::utils::asn1_to_chrono;
 
 #[derive(Debug)]
 enum ProxyError {
@@ -57,6 +51,19 @@ impl ResponseError for ProxyError {
             ProxyError::BadRequest(s) => HttpResponse::BadRequest().body(s.clone()),
             ProxyError::ResponseError(s) => HttpResponse::InternalServerError().body(s.clone()),
             ProxyError::ResponseViolation(s) => HttpResponse::Unauthorized().body(s.clone()),
+        }
+    }
+}
+
+impl From<OcspError> for ProxyError {
+    fn from(e: OcspError) -> Self {
+        match e {
+            OcspError::Encoding(what) => ProxyError::ResponseError(format!("Failed to encode {}", what)),
+            OcspError::Malformed(what) => ProxyError::ResponseError(format!("Malformed OCSP response: {}", what)),
+            OcspError::DisallowedAlgorithm => ProxyError::ResponseViolation("Disallowed signature algorithm".to_string()),
+            OcspError::SignatureInvalid => {
+                ProxyError::ResponseViolation("OCSP signature verification failed (neither issuer nor authorized responder)".to_string())
+            }
         }
     }
 }
@@ -100,43 +107,6 @@ fn decode_cert(data: &str) -> ProxyResult<Vec<u8>> {
         return Ok(p.into_contents());
     }
     BASE64.decode(data.trim()).map_err(|_| ProxyError::BadRequest("Failed to decode certificate: not valid PEM or base64".to_string()))
-}
-
-fn names_match(a: &Name<'_>, b: &Name<'_>) -> ProxyResult<bool> {
-    let a_der = asn1::write_single(a).map_err(|_| ProxyError::ResponseError("Failed to encode name".to_string()))?;
-    let b_der = asn1::write_single(b).map_err(|_| ProxyError::ResponseError("Failed to encode name".to_string()))?;
-    Ok(a_der == b_der)
-}
-
-fn get_ski<'a>(cert: &'a Certificate<'a>) -> Option<&'a [u8]> {
-    cert.extensions().ok()?.get_extension(&oid::SUBJECT_KEY_IDENTIFIER_OID).and_then(|ext| ext.value::<&[u8]>().ok())
-}
-
-fn get_aki_key_identifier<'a>(cert: &'a Certificate<'a>) -> Option<Vec<u8>> {
-    cert.extensions()
-        .ok()?
-        .get_extension(&oid::AUTHORITY_KEY_IDENTIFIER_OID)
-        .and_then(|ext| ext.value::<AuthorityKeyIdentifier<'_, Asn1Read>>().ok())
-        .and_then(|aki| aki.key_identifier.map(|k| k.to_vec()))
-}
-
-fn sha1_of(data: &[u8]) -> [u8; 20] {
-    use sha1::Digest;
-    let mut hasher = sha1::Sha1::new();
-    hasher.update(data);
-    hasher.finalize().into()
-}
-
-fn check_aki_matches_issuer(child: &Certificate<'_>, issuer: &Certificate<'_>) -> ProxyResult<()> {
-    let Some(aki_key_id) = get_aki_key_identifier(child) else {
-        return Ok(());
-    };
-    let issuer_id =
-        get_ski(issuer).map(|s| s.to_vec()).unwrap_or_else(|| sha1_of(issuer.tbs_cert.spki.subject_public_key.as_bytes()).to_vec());
-    if aki_key_id != issuer_id {
-        return Err(ProxyError::ResponseViolation("Authority Key Identifier does not match issuer's Subject Key Identifier".to_string()));
-    }
-    Ok(())
 }
 
 fn require_ca_cert(cert: &Certificate<'_>) -> ProxyResult<()> {
@@ -238,7 +208,7 @@ async fn check_ocsp(payload: web::Json<OcspRequestPayload>, client: web::Data<re
     let ocsp_url = get_ocsp_url(&cert).ok_or_else(|| ProxyError::BadRequest("No OCSP URL in certificate".to_string()))?;
     validate_fetch_url(&ocsp_url).map_err(ProxyError::BadRequest)?;
 
-    let (req_der, req_nonce, expected_name_hash, expected_key_hash) = create_ocsp_request(&cert, &issuer, false)?;
+    let (req_der, req_nonce) = create_ocsp_request(&cert, &issuer, false)?;
 
     let resp = client
         .post(&ocsp_url)
@@ -273,10 +243,7 @@ async fn check_ocsp(payload: web::Json<OcspRequestPayload>, client: web::Data<re
             }
             .into_inner();
 
-            match verify_ocsp_signature(&basic_resp, &issuer) {
-                Err(e) => return Err(e),
-                Ok(_) => {}
-            };
+            verify_ocsp_signature(&basic_resp, &issuer, chrono::Utc::now())?;
 
             if !req_nonce.is_empty() {
                 let resp_nonce = basic_resp
@@ -297,11 +264,7 @@ async fn check_ocsp(payload: web::Json<OcspRequestPayload>, client: web::Data<re
 
             match basic_resp.tbs_response_data.responses.unwrap_read().clone().next() {
                 Some(single_resp) => {
-                    if *single_resp.cert_id.hash_algorithm.oid() != oid::SHA1_OID
-                        || single_resp.cert_id.issuer_name_hash != expected_name_hash
-                        || single_resp.cert_id.issuer_key_hash != expected_key_hash
-                        || single_resp.cert_id.serial_number != cert.tbs_cert.serial
-                    {
+                    if !cert_id_matches(&single_resp.cert_id, &cert, &issuer) {
                         return Err(ProxyError::ResponseViolation("OCSP response certID does not match request".to_string()));
                     }
 
@@ -366,128 +329,7 @@ async fn check_ocsp(payload: web::Json<OcspRequestPayload>, client: web::Data<re
     }
 }
 
-fn check_algorithm_permitted(alg: &AlgorithmIdentifier<'_>) -> ProxyResult<()> {
-    if !smime::cryptography_x509_verification::policy::SMIME_PERMITTED_SIGNATURE_ALGORITHMS.contains(alg) {
-        return Err(ProxyError::ResponseViolation(format!("Disallowed signature algorithm: {:?}", alg.oid())));
-    }
-    Ok(())
-}
-
-fn verify_ocsp_signature(basic_resp: &BasicOCSPResponse<'_>, issuer: &Certificate<'_>) -> ProxyResult<()> {
-    let ops = KeyCryptoOps {};
-
-    let tbs_der = asn1::write_single(&basic_resp.tbs_response_data)
-        .map_err(|_| ProxyError::ResponseError("Failed to encode OCSP TBS response data".to_string()))?;
-
-    check_algorithm_permitted(&basic_resp.signature_algorithm)?;
-
-    let issuer_spki_hash = sha1_of(issuer.tbs_cert.spki.subject_public_key.as_bytes());
-    let issuer_matches_responder_id = match &basic_resp.tbs_response_data.responder_id {
-        ResponderId::ByName(name) => names_match(name, &issuer.tbs_cert.subject)?,
-        ResponderId::ByKey(hash) => *hash == issuer_spki_hash.as_slice(),
-    };
-
-    let issuer_pubkey =
-        ops.public_key(issuer).map_err(|e| ProxyError::ResponseError(format!("Failed to extract issuer public key: {}", e)))?;
-
-    if issuer_matches_responder_id {
-        if smime::cryptography_x509_verify::sign::verify_signature_with_signature_algorithm(
-            &issuer_pubkey,
-            &basic_resp.signature_algorithm,
-            basic_resp.signature.as_bytes(),
-            &tbs_der,
-        )
-        .is_ok()
-        {
-            return Ok(());
-        }
-    }
-
-    if let Some(certs) = &basic_resp.certs {
-        for cert in certs.unwrap_read().clone() {
-            let candidate_matches = match &basic_resp.tbs_response_data.responder_id {
-                ResponderId::ByName(name) => names_match(name, &cert.tbs_cert.subject)?,
-                ResponderId::ByKey(hash) => *hash == sha1_of(cert.tbs_cert.spki.subject_public_key.as_bytes()).as_slice(),
-            };
-            if !candidate_matches {
-                continue;
-            }
-
-            if !names_match(&cert.tbs_cert.issuer, &issuer.tbs_cert.subject)? {
-                continue;
-            }
-            if check_aki_matches_issuer(&cert, issuer).is_err() {
-                continue;
-            }
-
-            if check_algorithm_permitted(&cert.signature_alg).is_err() {
-                continue;
-            }
-            let cert_tbs_der = asn1::write_single(&cert.tbs_cert)
-                .map_err(|_| ProxyError::ResponseError("Failed to encode responder TBS cert".to_string()))?;
-            if smime::cryptography_x509_verify::sign::verify_signature_with_signature_algorithm(
-                &issuer_pubkey,
-                &cert.signature_alg,
-                cert.signature.as_bytes(),
-                &cert_tbs_der,
-            )
-            .is_err()
-            {
-                continue;
-            }
-
-            let extensions = match cert.extensions() {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-
-            let has_ocsp_signing = extensions
-                .get_extension(&oid::EXTENDED_KEY_USAGE_OID)
-                .and_then(|ext| ext.value::<asn1::SequenceOf<'_, asn1::ObjectIdentifier>>().ok())
-                .map(|ekus| ekus.into_iter().any(|eku| eku == oid::EKU_OCSP_SIGNING_OID))
-                .unwrap_or(false);
-
-            let has_no_check = extensions.get_extension(&oid::OCSP_NO_CHECK_OID).is_some();
-
-            if !(has_ocsp_signing && has_no_check) {
-                continue;
-            }
-
-            let now = chrono::Utc::now();
-            let not_before = asn1_to_chrono(&cert.tbs_cert.validity.not_before.as_datetime());
-            let not_after = asn1_to_chrono(&cert.tbs_cert.validity.not_after.as_datetime());
-            if let (Some(nb), Some(na)) = (not_before, not_after) {
-                if now < nb || now > na {
-                    continue;
-                }
-            }
-
-            let responder_pubkey = match ops.public_key(&cert) {
-                Ok(k) => k,
-                Err(_) => continue,
-            };
-
-            if smime::cryptography_x509_verify::sign::verify_signature_with_signature_algorithm(
-                &responder_pubkey,
-                &basic_resp.signature_algorithm,
-                basic_resp.signature.as_bytes(),
-                &tbs_der,
-            )
-            .is_ok()
-            {
-                return Ok(());
-            }
-        }
-    }
-
-    Err(ProxyError::ResponseViolation("OCSP signature verification failed (neither issuer nor authorized responder)".to_string()))
-}
-
-fn create_ocsp_request(
-    cert: &Certificate<'_>,
-    issuer: &Certificate<'_>,
-    nonce: bool,
-) -> ProxyResult<(Vec<u8>, Vec<u8>, [u8; 20], [u8; 20])> {
+fn create_ocsp_request(cert: &Certificate<'_>, issuer: &Certificate<'_>, nonce: bool) -> ProxyResult<(Vec<u8>, Vec<u8>)> {
     use sha1::Digest;
     let mut hasher = sha1::Sha1::new();
     let issuer_name_der =
@@ -529,7 +371,7 @@ fn create_ocsp_request(
         };
 
         let req_der = asn1::write_single(&ocsp_req).map_err(|_| ProxyError::ResponseError("Failed to encode OCSP request".to_string()))?;
-        return Ok((req_der, nonce_bytes.to_vec(), issuer_name_hash, issuer_key_hash));
+        return Ok((req_der, nonce_bytes.to_vec()));
     }
 
     let ocsp_req = OCSPRequest {
@@ -543,7 +385,7 @@ fn create_ocsp_request(
     };
 
     let req_der = asn1::write_single(&ocsp_req).map_err(|_| ProxyError::ResponseError("Failed to encode OCSP request".to_string()))?;
-    Ok((req_der, Vec::new(), issuer_name_hash, issuer_key_hash))
+    Ok((req_der, Vec::new()))
 }
 
 fn get_cert_status_str(single_resp: &SingleResponse<'_>) -> &'static str {

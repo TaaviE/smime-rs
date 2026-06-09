@@ -23,7 +23,8 @@ This project implements a few additional features compared to other clients that
 * UTF-8 support - SMTPUTF8 addresses, SmtpUTF8Mailbox SAN support
 * SHAKE support
 * Enforcement of CA/B Forum S/MIME BR
-* RFC 5940 (Additional CMS Revocation Information Choices) support
+* RFC 5940 (Additional CMS Revocation Information Choices) support (for now stapled OCSP responses are used for
+  revocation)
 
 Because they're either unused or extremely rare in the S/MIME ecosystem only initial support exists for the following:
 

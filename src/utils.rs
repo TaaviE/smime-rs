@@ -2,6 +2,14 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
+/// Convert an ASN.1 `DateTime` (UTC, second precision) to a chrono `DateTime<Utc>`.
+pub fn asn1_to_chrono(dt: &asn1::DateTime) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::TimeZone;
+    chrono::Utc
+        .with_ymd_and_hms(dt.year() as i32, dt.month() as u32, dt.day() as u32, dt.hour() as u32, dt.minute() as u32, dt.second() as u32)
+        .single()
+}
+
 pub fn extract_first_multipart_part_raw<'a>(eml_raw: &'a [u8], boundary: &str) -> Result<&'a [u8], String> {
     let body_start = find_bytes(eml_raw, b"\r\n\r\n").map(|p| p + 4).ok_or("Could not locate end of top-level headers (\\r\\n\\r\\n)")?;
 

@@ -7,54 +7,147 @@ use unic_langid::LanguageIdentifier;
 #[derive(Clone, Debug, PartialEq)]
 pub enum SmimeError {
     // Errors
-    ReadEml { path: String, err: String },
+    ReadEml {
+        path: String,
+        err: String,
+    },
     ParseEml,
     MissingContentType,
     MissingBoundary,
     NoSmimeSig,
-    BuildVerifier { err: String },
+    BuildVerifier {
+        err: String,
+    },
     ParseInner,
     MsgNotEnoughParts,
     NoSigSubpart,
-    ParsePkcs7Sig { err: String },
-    ExtractMultipart { err: String },
+    ParsePkcs7Sig {
+        err: String,
+    },
+    ExtractMultipart {
+        err: String,
+    },
     NoPkcs7Mime,
-    ParsePkcs7Msg { err: String },
+    ParsePkcs7Msg {
+        err: String,
+    },
     NoPkcs7Content,
-    LoadCaBundle { store: String, err: String },
-    PolicySetup { step: String, err: String },
-    ChainValidation { fp: String, idx: usize, err: String },
-    UnsupportedPublicKey { detail: String },
-    DigestVerify { err: String },
-    UnsupportedDigestAlg { alg: String, idx: usize },
-    DisallowedDigestAlg { alg: String, idx: usize },
-    UnsupportedSignatureAlg { alg: String, idx: usize },
-    DisallowedSignatureAlg { alg: String, idx: usize },
-    SigVerify { err: String },
-    SignerCertNotFound { id: String },
-    OtherNameParseError { err: String, hex_data: String },
-    MissingContentTypeAttr { idx: usize },
-    ContentTypeMismatch { idx: usize },
+    LoadCaBundle {
+        store: String,
+        err: String,
+    },
+    PolicySetup {
+        step: String,
+        err: String,
+    },
+    ChainValidation {
+        fp: String,
+        idx: usize,
+        err: String,
+    },
+    UnsupportedPublicKey {
+        detail: String,
+    },
+    DigestVerify {
+        err: String,
+    },
+    UnsupportedDigestAlg {
+        alg: String,
+        idx: usize,
+    },
+    DisallowedDigestAlg {
+        alg: String,
+        idx: usize,
+    },
+    UnsupportedSignatureAlg {
+        alg: String,
+        idx: usize,
+    },
+    DisallowedSignatureAlg {
+        alg: String,
+        idx: usize,
+    },
+    SigVerify {
+        err: String,
+    },
+    SignerCertNotFound {
+        id: String,
+    },
+    OtherNameParseError {
+        err: String,
+        hex_data: String,
+    },
+    MissingContentTypeAttr {
+        idx: usize,
+    },
+    ContentTypeMismatch {
+        idx: usize,
+    },
     UnexpectedEContentType,
-    DecryptionFailed { err: String },
-    UnsupportedKeyEncryptionAlg { alg: String },
-    UnsupportedContentEncryptionAlg { alg: String },
+    DecryptionFailed {
+        err: String,
+    },
+    UnsupportedKeyEncryptionAlg {
+        alg: String,
+    },
+    UnsupportedContentEncryptionAlg {
+        alg: String,
+    },
     NoMatchingRecipient,
-    PrivateKeyParseFailed { err: String },
+    PrivateKeyParseFailed {
+        err: String,
+    },
+    /// A stapled OCSP response revokes a certificate in the verified chain (the
+    /// leaf or an intermediate CA), which invalidates the certificate.
+    StapledOcspRevoked {
+        subject: String,
+    },
     Raw(String),
     // Warnings
-    CmsVersionMismatch { structure: String, expected: u8, actual: u8, idx: Option<usize> },
-    AttributeCardinality { attr: String, idx: usize },
-    DateMismatch { msg: String, date_a: String, date_b: String },
+    CmsVersionMismatch {
+        structure: String,
+        expected: u8,
+        actual: u8,
+        idx: Option<usize>,
+    },
+    AttributeCardinality {
+        attr: String,
+        idx: usize,
+    },
+    DateMismatch {
+        msg: String,
+        date_a: String,
+        date_b: String,
+    },
     WildDuckWorkaround,
-    CertPolicyWarning { detail: String },
-    DigestAlgorithmWarning { detail: String, idx: usize },
-    AlgorithmProtectionMismatch { field: String, idx: usize },
-    LocalPartCaseMismatch { from: String, cert: String },
-    RsaPssParameterWarning { detail: String, idx: usize },
-    Pbkdf2LowIterationCount { iterations: u64 },
-    WeakContentEncryptionAlg { alg: String },
-    WeakKeyEncryptionAlg { alg: String },
+    CertPolicyWarning {
+        detail: String,
+    },
+    DigestAlgorithmWarning {
+        detail: String,
+        idx: usize,
+    },
+    AlgorithmProtectionMismatch {
+        field: String,
+        idx: usize,
+    },
+    LocalPartCaseMismatch {
+        from: String,
+        cert: String,
+    },
+    RsaPssParameterWarning {
+        detail: String,
+        idx: usize,
+    },
+    Pbkdf2LowIterationCount {
+        iterations: u64,
+    },
+    WeakContentEncryptionAlg {
+        alg: String,
+    },
+    WeakKeyEncryptionAlg {
+        alg: String,
+    },
 }
 
 impl SmimeError {
@@ -95,6 +188,7 @@ impl SmimeError {
             SmimeError::UnsupportedContentEncryptionAlg { .. } => "err-unsupported-content-encryption-alg",
             SmimeError::NoMatchingRecipient => "err-no-matching-recipient",
             SmimeError::PrivateKeyParseFailed { .. } => "err-private-key-parse-failed",
+            SmimeError::StapledOcspRevoked { .. } => "err-stapled-ocsp-revoked",
             SmimeError::Raw(_) => "raw",
             // Warnings
             SmimeError::CmsVersionMismatch { .. } => "warn-cms-version-mismatch",
@@ -217,6 +311,9 @@ impl SmimeError {
             }
             SmimeError::WeakKeyEncryptionAlg { alg } => {
                 args.insert("alg".to_string(), FluentValue::from(alg.clone()));
+            }
+            SmimeError::StapledOcspRevoked { subject } => {
+                args.insert("subject".to_string(), FluentValue::from(subject.clone()));
             }
         }
         args
