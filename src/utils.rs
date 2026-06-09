@@ -19,26 +19,8 @@ pub fn ber_to_der(input: &[u8]) -> Result<Vec<u8>, String> {
 
 /// Extract the content portion from a DER-encoded TLV.
 fn der_content(tlv: &[u8]) -> Result<&[u8], String> {
-    if tlv.is_empty() {
-        return Err("empty TLV".to_string());
-    }
-    let mut pos = 1;
-    if tlv[0] & 0x1f == 0x1f {
-        while pos < tlv.len() && tlv[pos] & 0x80 != 0 {
-            pos += 1;
-        }
-        pos += 1;
-    }
-    if pos >= tlv.len() {
-        return Err("truncated TLV length".to_string());
-    }
-    let (len, consumed) = decode_ber_definite_length(tlv[pos], &tlv[pos + 1..])?;
-    pos += 1 + consumed;
-    let end = pos.checked_add(len).ok_or("TLV content length overflow")?;
-    if end > tlv.len() {
-        return Err("TLV content length exceeds buffer".to_string());
-    }
-    Ok(&tlv[pos..end])
+    let t = parse_der_tlv(tlv, 0)?;
+    Ok(&tlv[t.header_len..t.header_len + t.content_len])
 }
 
 /// Flatten constructed string children into a single primitive encoding (X.690 8.6.4, 8.7.3).
@@ -256,23 +238,8 @@ fn parse_der_tlv(data: &[u8], offset: usize) -> Result<DerTlv, String> {
     if pos >= data.len() {
         return Err("truncated length".to_string());
     }
-    let len_byte = data[pos];
-    pos += 1;
-    let content_len;
-    if len_byte & 0x80 == 0 {
-        content_len = len_byte as usize;
-    } else {
-        let num_bytes = (len_byte & 0x7f) as usize;
-        if num_bytes == 0 || num_bytes > data.len() - pos {
-            return Err("invalid definite length".to_string());
-        }
-        let mut length: usize = 0;
-        for &b in &data[pos..pos + num_bytes] {
-            length = length.checked_mul(256).and_then(|l| l.checked_add(b as usize)).ok_or("length overflow")?;
-        }
-        content_len = length;
-        pos += num_bytes;
-    }
+    let (content_len, consumed) = decode_ber_definite_length(data[pos], &data[pos + 1..])?;
+    pos += 1 + consumed;
     if content_len > data.len() - pos {
         return Err("TLV content exceeds buffer".to_string());
     }
