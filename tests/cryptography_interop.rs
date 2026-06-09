@@ -23,6 +23,10 @@ mod tests {
         assert_eq!(result.from_comment, Some("Taavi Eomäe".to_string()));
         assert_eq!(result.date.unwrap().to_rfc3339(), "2026-02-06T15:07:00+00:00".to_string());
         assert_eq!(result.failures.iter().filter(|f| matches!(f, SmimeError::WildDuckWorkaround)).count(), 1);
+        // Passing via the WildDuck workaround means signed_content is the normalized
+        // (CRLF-fixed) content that was actually verified, not the original bytes.
+        let signed = result.signed_content.as_deref().expect("signed_content present");
+        assert!(signed.ends_with(b"</html>\r\n"), "signed_content must be WildDuck-normalized (trailing CRLF)");
     }
 
     #[test]

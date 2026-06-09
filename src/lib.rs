@@ -1251,6 +1251,7 @@ impl<'a> SignedTarget<'a> {
                     checks.message_digest_matches_content = true;
                 }
                 if checks.message_digest_matches_content && checks.signature_matches_signed_data {
+                    result.signed_content = Some(normalized);
                     result.failures.push(SmimeError::WildDuckWorkaround);
                     console_log!("Message digest matched with WildDuck workaround");
                     return true;
