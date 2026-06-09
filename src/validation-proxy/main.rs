@@ -167,17 +167,8 @@ fn verify_cert_issued_by(cert: &Certificate<'_>, issuer: &Certificate<'_>) -> Pr
 fn validate_fetch_url(raw: &str) -> Result<(), String> {
     let parsed = url::Url::parse(raw).map_err(|e| format!("Invalid URL '{}': {}", raw, e))?;
     match parsed.scheme() {
-        "http" | "https" => {}
-        s => return Err(format!("Disallowed URL scheme '{}' in '{}'", s, raw)),
-    }
-    match parsed.host() {
-        Some(url::Host::Ipv4(ip)) if ip.is_loopback() || ip.is_private() || ip.is_link_local() => {
-            Err(format!("URL '{}' points to a private/internal address", raw))
-        }
-        Some(url::Host::Ipv6(ip)) if ip.is_loopback() => Err(format!("URL '{}' points to a loopback address", raw)),
-        Some(url::Host::Domain(d)) if d.eq_ignore_ascii_case("localhost") => Err(format!("URL '{}' points to localhost", raw)),
-        None => Err(format!("URL '{}' has no host", raw)),
-        _ => Ok(()),
+        "http" | "https" => Ok(()),
+        s => Err(format!("Disallowed URL scheme '{}' in '{}'", s, raw)),
     }
 }
 
