@@ -28,7 +28,9 @@ pub fn decrypt_and_verify_smime_from_eml_detailed(
     let mut outer_date: Option<chrono::DateTime<Utc>> = None;
 
     for depth in 0..MAX_DECRYPT_DEPTH {
-        let mut result = decrypt_and_verify_one_layer(current_eml, trust_stores.clone(), keys, ca_file_pem);
+        let outermost_from = outer_from_address.as_deref().map(|a| mail_parser::Addr::new(outer_from_comment.as_deref(), a));
+        let mut result =
+            decrypt_and_verify_one_layer(current_eml, trust_stores.clone(), keys, ca_file_pem, outermost_from.as_ref(), outer_date);
 
         // TODO: properly record each encryption layer's info instead of just the first
         if outer_encryption_info.is_none() {
@@ -80,12 +82,16 @@ pub fn decrypt_and_verify_smime_from_eml_detailed(
     }
 }
 
-/// Process one layer of decrypted and signed data
+/// Process one layer of decrypted and signed data.
+/// `outermost_from`/`outermost_date` are the outermost message's values, used
+/// for sender verification when this layer has no From/Date of its own.
 fn decrypt_and_verify_one_layer(
     eml_text: String,
     trust_stores: Vec<TrustStore>,
     keys: &decrypt::DecryptionKeys,
     ca_file_pem: Option<&[u8]>,
+    outermost_from: Option<&mail_parser::Addr<'_>>,
+    outermost_date: Option<chrono::DateTime<Utc>>,
 ) -> SmimeValidationResult {
     let mut result = SmimeValidationResult {
         signing_system: SigningSystem::Other,
@@ -157,12 +163,11 @@ fn decrypt_and_verify_one_layer(
             result.signing_system = SigningSystem::MIMEPartSMIME;
             let from_addr = result.from_address.clone();
             let from_comment = result.from_comment.clone();
-            let date = result.date;
-            let outer_from_addr = from_addr.as_deref().map(|addr| mail_parser::Addr::new(from_comment.as_deref(), addr));
+            let own_from = from_addr.as_deref().map(|addr| mail_parser::Addr::new(from_comment.as_deref(), addr));
+            let from = own_from.as_ref().or(outermost_from);
+            let date = result.date.or(outermost_date);
             match SignedTarget::econtent(&sd_inner) {
-                Ok(target) => {
-                    verify_signed_data(&sd_inner, target, &trust_stores, ca_file_pem, outer_from_addr.as_ref(), date, &mut result)
-                }
+                Ok(target) => verify_signed_data(&sd_inner, target, &trust_stores, ca_file_pem, from, date, &mut result),
                 Err(e) => result.failures.push(e),
             }
         }

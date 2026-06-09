@@ -1,7 +1,3 @@
-fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
-}
-
 /// Convert an ASN.1 `DateTime` (UTC, second precision) to a chrono `DateTime<Utc>`.
 pub fn asn1_to_chrono(dt: &asn1::DateTime) -> Option<chrono::DateTime<chrono::Utc>> {
     use chrono::TimeZone;
@@ -10,34 +6,11 @@ pub fn asn1_to_chrono(dt: &asn1::DateTime) -> Option<chrono::DateTime<chrono::Ut
         .single()
 }
 
-pub fn extract_first_multipart_part_raw<'a>(eml_raw: &'a [u8], boundary: &str) -> Result<&'a [u8], String> {
-    let body_start = find_bytes(eml_raw, b"\r\n\r\n").map(|p| p + 4).ok_or("Could not locate end of top-level headers (\\r\\n\\r\\n)")?;
-
-    let body = &eml_raw[body_start..];
-    let open = format!("--{}\r\n", boundary);
-    let close = format!("\r\n--{}", boundary);
-
-    // Opening boundary must be at start of body or preceded by CRLF (RFC 2046)
-    let rel = if body.starts_with(open.as_bytes()) {
-        0
-    } else {
-        find_bytes(body, format!("\r\n{}", open).as_bytes())
-            .map(|p| p + 2) // skip the leading \r\n
-            .ok_or("Opening boundary not found")?
-    };
-    let part_start = body_start + rel + open.len();
-
-    let part_end =
-        find_bytes(&eml_raw[part_start..], close.as_bytes()).map(|p| p + part_start).ok_or("Next boundary after first part not found")?;
-
-    Ok(&eml_raw[part_start..part_end])
-}
-
 /// Converts BER-encoded ASN.1 data to strict DER by:
 /// - Replacing indefinite-length encodings with definite-length ones
 /// - Sorting SET OF elements into canonical (lexicographic) order
 pub fn ber_to_der(input: &[u8]) -> Result<Vec<u8>, String> {
-    let (der, rest) = ber_tlv_to_der(input)?;
+    let (der, rest) = ber_tlv_to_der(input, 0)?;
     if !rest.is_empty() {
         return Err(format!("trailing {} bytes after top-level element", rest.len()));
     }
@@ -61,18 +34,43 @@ fn der_content(tlv: &[u8]) -> Result<&[u8], String> {
     }
     let (len, consumed) = decode_ber_definite_length(tlv[pos], &tlv[pos + 1..])?;
     pos += 1 + consumed;
-    if pos + len > tlv.len() {
+    let end = pos.checked_add(len).ok_or("TLV content length overflow")?;
+    if end > tlv.len() {
         return Err("TLV content length exceeds buffer".to_string());
     }
-    Ok(&tlv[pos..pos + len])
+    Ok(&tlv[pos..end])
 }
 
-/// Flatten constructed string children into a single primitive encoding.
+/// Flatten constructed string children into a single primitive encoding (X.690 8.6.4, 8.7.3).
 fn flatten_constructed_string(tag_byte: u8, child_blobs: Vec<Vec<u8>>) -> Result<Vec<u8>, String> {
     let primitive_tag = tag_byte & !0x20;
-    let mut content = Vec::new();
     for blob in &child_blobs {
-        content.extend_from_slice(der_content(blob)?);
+        // Nested constructed segments were already flattened by the recursion
+        if blob.first() != Some(&primitive_tag) {
+            return Err("constructed string segment type mismatch".to_string());
+        }
+    }
+    let mut content = Vec::new();
+    if primitive_tag == 0x03 {
+        // X.690 8.6.4: each BIT STRING segment carries its own unused-bits octet;
+        // only the final segment may have unused bits. The flattened value gets
+        // the final segment's count and the concatenation of all data bits.
+        content.push(0);
+        for (i, blob) in child_blobs.iter().enumerate() {
+            let seg = der_content(blob)?;
+            let (&unused, bits) = seg.split_first().ok_or("BIT STRING segment missing unused-bits octet")?;
+            let is_last = i + 1 == child_blobs.len();
+            // X.690 8.6.2.2/8.6.2.3: at most 7 unused bits, zero when there are no data bits
+            if unused > 7 || (unused != 0 && (bits.is_empty() || !is_last)) {
+                return Err("invalid unused-bits octet in BIT STRING segment".to_string());
+            }
+            content[0] = unused;
+            content.extend_from_slice(bits);
+        }
+    } else {
+        for blob in &child_blobs {
+            content.extend_from_slice(der_content(blob)?);
+        }
     }
     let mut out = Vec::new();
     out.push(primitive_tag);
@@ -81,8 +79,13 @@ fn flatten_constructed_string(tag_byte: u8, child_blobs: Vec<Vec<u8>>) -> Result
     Ok(out)
 }
 
+const MAX_BER_DEPTH: usize = 64;
+
 /// Parse one BER TLV element, returning its DER encoding and the remaining input.
-fn ber_tlv_to_der(input: &[u8]) -> Result<(Vec<u8>, &[u8]), String> {
+fn ber_tlv_to_der(input: &[u8], depth: usize) -> Result<(Vec<u8>, &[u8]), String> {
+    if depth > MAX_BER_DEPTH {
+        return Err("BER nesting too deep".to_string());
+    }
     if input.is_empty() {
         return Err("unexpected end of input".to_string());
     }
@@ -134,7 +137,7 @@ fn ber_tlv_to_der(input: &[u8]) -> Result<(Vec<u8>, &[u8]), String> {
             if rest.is_empty() {
                 return Err("unterminated indefinite-length element".to_string());
             }
-            let (child_der, remaining) = ber_tlv_to_der(rest)?;
+            let (child_der, remaining) = ber_tlv_to_der(rest, depth + 1)?;
             child_blobs.push(child_der);
             rest = remaining;
         }
@@ -156,22 +159,23 @@ fn ber_tlv_to_der(input: &[u8]) -> Result<(Vec<u8>, &[u8]), String> {
         let (content_len, bytes_consumed) = decode_ber_definite_length(len_byte, &input[pos..])?;
         pos += bytes_consumed;
 
-        if pos + content_len > input.len() {
+        let end = pos.checked_add(content_len).ok_or("content length overflow")?;
+        if end > input.len() {
             return Err(format!("content length {} exceeds available data {} at offset {}", content_len, input.len() - pos, pos));
         }
 
         if is_constructed {
             // Recursively normalize children
-            let content_slice = &input[pos..pos + content_len];
+            let content_slice = &input[pos..end];
             let mut child_blobs: Vec<Vec<u8>> = Vec::new();
             let mut child_rest = content_slice;
             while !child_rest.is_empty() {
-                let (child_der, remaining) = ber_tlv_to_der(child_rest)?;
+                let (child_der, remaining) = ber_tlv_to_der(child_rest, depth + 1)?;
                 child_blobs.push(child_der);
                 child_rest = remaining;
             }
             if needs_flatten {
-                return Ok((flatten_constructed_string(tag_byte, child_blobs)?, &input[pos + content_len..]));
+                return Ok((flatten_constructed_string(tag_byte, child_blobs)?, &input[end..]));
             }
             if is_set {
                 child_blobs.sort();
@@ -181,15 +185,15 @@ fn ber_tlv_to_der(input: &[u8]) -> Result<(Vec<u8>, &[u8]), String> {
             out.extend_from_slice(tag_bytes);
             encode_der_length(&mut out, children_der.len());
             out.extend_from_slice(&children_der);
-            Ok((out, &input[pos + content_len..]))
+            Ok((out, &input[end..]))
         } else {
             // Primitive - copy as-is (re-encode length for canonical DER)
-            let content = &input[pos..pos + content_len];
+            let content = &input[pos..end];
             let mut out = Vec::new();
             out.extend_from_slice(tag_bytes);
             encode_der_length(&mut out, content_len);
             out.extend_from_slice(content);
-            Ok((out, &input[pos + content_len..]))
+            Ok((out, &input[end..]))
         }
     }
 }
@@ -207,7 +211,7 @@ fn decode_ber_definite_length(first: u8, rest: &[u8]) -> Result<(usize, usize), 
         }
         let mut length: usize = 0;
         for &b in &rest[..num_bytes] {
-            length = length.checked_shl(8).ok_or_else(|| "length overflow".to_string())? | b as usize;
+            length = length.checked_mul(256).and_then(|l| l.checked_add(b as usize)).ok_or("length overflow")?;
         }
         Ok((length, num_bytes))
     }
@@ -259,15 +263,18 @@ fn parse_der_tlv(data: &[u8], offset: usize) -> Result<DerTlv, String> {
         content_len = len_byte as usize;
     } else {
         let num_bytes = (len_byte & 0x7f) as usize;
-        if num_bytes == 0 || pos + num_bytes > data.len() {
+        if num_bytes == 0 || num_bytes > data.len() - pos {
             return Err("invalid definite length".to_string());
         }
         let mut length: usize = 0;
         for &b in &data[pos..pos + num_bytes] {
-            length = length.checked_shl(8).ok_or("length overflow")? | b as usize;
+            length = length.checked_mul(256).and_then(|l| l.checked_add(b as usize)).ok_or("length overflow")?;
         }
         content_len = length;
         pos += num_bytes;
+    }
+    if content_len > data.len() - pos {
+        return Err("TLV content exceeds buffer".to_string());
     }
     Ok(DerTlv { header_len: pos - offset, content_len, is_constructed, tag_byte })
 }
@@ -316,6 +323,12 @@ fn sort_cms_implicit_sets(data: &mut [u8]) -> Result<(), String> {
     // First element: OID (content type)
     let oid_tlv = parse_der_tlv(data, ci_content_start)?;
     let after_oid = ci_content_start + oid_tlv.header_len + oid_tlv.content_len;
+
+    // Only SignedData (1.2.840.113549.1.7.2) has the implicit SET OF fields this pass sorts
+    const ID_SIGNED_DATA: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02];
+    if oid_tlv.tag_byte != 0x06 || &data[ci_content_start + oid_tlv.header_len..after_oid] != ID_SIGNED_DATA {
+        return Ok(());
+    }
 
     // Second element: [0] EXPLICIT (content)
     let explicit0 = parse_der_tlv(data, after_oid)?;
@@ -407,6 +420,69 @@ pub fn email_domain_to_a_label(email: &str) -> String {
         }
     }
     email.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ber_to_der_rejects_length_that_overflows_position() {
+        // 8-byte length 0xFFFF_FFFF_FFFF_FFFF: `pos + len` wraps on 64-bit
+        let input = [0x04, 0x88, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+        assert!(ber_to_der(&input).is_err());
+    }
+
+    #[test]
+    fn ber_to_der_rejects_nine_byte_length() {
+        // 9-byte length wraps usize accumulation to 0 and would silently mis-parse
+        let input = [0x04, 0x89, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        assert!(ber_to_der(&input).is_err());
+    }
+
+    #[test]
+    fn ber_to_der_rejects_deep_nesting() {
+        let input = [0x30, 0x80].repeat(10_000);
+        assert!(ber_to_der(&input).is_err());
+    }
+
+    #[test]
+    fn parse_der_tlv_rejects_content_past_buffer() {
+        assert!(parse_der_tlv(&[0x30, 0x05, 0x02, 0x01], 0).is_err());
+    }
+
+    #[test]
+    fn ber_to_der_flattens_constructed_bit_string() {
+        // segments (0 unused, 0xAA) + (4 unused, 0xB0) -> 03 03 04 AA B0
+        let input = [0x23, 0x80, 0x03, 0x02, 0x00, 0xAA, 0x03, 0x02, 0x04, 0xB0, 0x00, 0x00];
+        assert_eq!(ber_to_der(&input).unwrap(), [0x03, 0x03, 0x04, 0xAA, 0xB0]);
+    }
+
+    #[test]
+    fn ber_to_der_flattens_empty_constructed_bit_string() {
+        assert_eq!(ber_to_der(&[0x23, 0x80, 0x00, 0x00]).unwrap(), [0x03, 0x01, 0x00]);
+    }
+
+    #[test]
+    fn ber_to_der_rejects_unused_bits_in_non_final_bit_string_segment() {
+        let input = [0x23, 0x80, 0x03, 0x02, 0x04, 0xB0, 0x03, 0x02, 0x00, 0xAA, 0x00, 0x00];
+        assert!(ber_to_der(&input).is_err());
+    }
+
+    #[test]
+    fn ber_to_der_rejects_mismatched_segment_type() {
+        // constructed OCTET STRING containing an INTEGER segment
+        let input = [0x24, 0x80, 0x02, 0x01, 0x05, 0x00, 0x00];
+        assert!(ber_to_der(&input).is_err());
+    }
+
+    #[test]
+    fn ber_to_der_cms_skips_sort_for_non_signed_data() {
+        // ContentInfo { id-data, [0] { OCTET STRING } } has no SignedData layout to sort
+        let input =
+            [0x30, 0x12, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x01, 0xA0, 0x05, 0x04, 0x03, 0xAA, 0xBB, 0xCC];
+        assert_eq!(ber_to_der_cms(&input).unwrap(), input);
+    }
 }
 
 pub fn set_panic_hook() {

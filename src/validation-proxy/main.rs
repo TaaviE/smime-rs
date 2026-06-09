@@ -134,6 +134,7 @@ fn verify_cert_issued_by(cert: &Certificate<'_>, issuer: &Certificate<'_>) -> Pr
         .map_err(|e| ProxyError::BadRequest(format!("Certificate was not signed by the provided issuer: {}", e)))
 }
 
+// Only the scheme is restricted so this experimental test utility stays usable in test environments.
 fn validate_fetch_url(raw: &str) -> Result<(), String> {
     let parsed = url::Url::parse(raw).map_err(|e| format!("Invalid URL '{}': {}", raw, e))?;
     match parsed.scheme() {
@@ -169,13 +170,7 @@ fn get_crl_urls(cert: &Certificate<'_>) -> Vec<String> {
         None => return urls,
     };
 
-    let dps = match ext.value::<asn1::SequenceOf<
-        '_,
-        smime::cryptography_x509::extensions::DistributionPoint<
-            '_,
-            smime::cryptography_x509::common::Asn1Read,
-        >,
-    >>() {
+    let dps = match ext.value::<asn1::SequenceOf<'_, smime::cryptography_x509::extensions::DistributionPoint<'_, Asn1Read>>>() {
         Ok(d) => d,
         Err(_) => return urls,
     };

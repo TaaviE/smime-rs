@@ -13,6 +13,11 @@ mod tests {
             .into_contents()
     }
 
+    /// Trust anchor for the nested fixtures, written by `create-cms nested`.
+    fn nested_trust() -> smime::TrustConfig {
+        smime::TrustConfig { stores: vec![], ca_file_pem: Some(include_bytes!("general/nested_root_ca.pem").to_vec()) }
+    }
+
     fn assert_decrypted_ok(result: &smime::SmimeValidationResult, expected_content: &str) {
         assert!(result.encryption_info.is_some(), "No encryption_info; failures: {:?}", result.failures);
         let has_decrypt_err = result.failures.iter().any(|f| {
@@ -402,11 +407,16 @@ mod tests {
         let cert_der = load_cert_der("tests/keys/test_rsa.key");
         let result = smime::decrypt_and_verify_smime_from_eml_detailed(
             eml,
-            vec![TrustStore::Debug].into(),
+            nested_trust(),
             &smime::decrypt::DecryptionKeys { private_key_der: &key_der, recipient_cert_der: &cert_der, ..Default::default() },
         );
         assert!(result.failures.is_empty(), "Unexpected failures: {:?}", result.failures);
         assert!(result.encryption_info.is_some());
+        // The decrypted SignedData layer has no From header of its own; the outer
+        // message's From is used for its verification.
+        assert_eq!(result.signers.len(), 1);
+        assert!(result.signers[0].signature_valid);
+        assert_eq!(result.from_address.as_deref(), Some("kalle@naide.ee"));
         let content = String::from_utf8(result.signed_content.unwrap()).unwrap();
         assert!(content.contains("signed then encrypted"));
     }
@@ -419,11 +429,14 @@ mod tests {
         let cert_der = load_cert_der("tests/keys/test_rsa.key");
         let result = smime::decrypt_and_verify_smime_from_eml_detailed(
             eml,
-            vec![TrustStore::Debug].into(),
+            nested_trust(),
             &smime::decrypt::DecryptionKeys { private_key_der: &key_der, recipient_cert_der: &cert_der, ..Default::default() },
         );
         assert!(result.failures.is_empty(), "Unexpected failures: {:?}", result.failures);
         assert!(result.encryption_info.is_some());
+        // Both signed layers verify, each against the outer message's From.
+        assert_eq!(result.signers.len(), 2);
+        assert!(result.signers.iter().all(|s| s.signature_valid));
         let content = String::from_utf8(result.signed_content.unwrap()).unwrap();
         assert!(content.contains("innermost content"));
     }
@@ -622,9 +635,13 @@ mod tests {
         println!("Result: {:#?}", result);
 
         assert_eq!(result.signing_system, SigningSystem::MIMEPartSMIME);
-        assert_eq!(result.signers.len(), 1);
-        assert!(result.signers[0].validation_details.checks.signature_matches_signed_data);
-        assert!(result.signers[0].validation_details.checks.message_digest_matches_content);
+        // The message is signed twice (sign over sign inside the envelope); both
+        // signatures are verified, the inner one against the outer message's From.
+        assert_eq!(result.signers.len(), 2);
+        for signer in &result.signers {
+            assert!(signer.validation_details.checks.signature_matches_signed_data);
+            assert!(signer.validation_details.checks.message_digest_matches_content);
+        }
         assert_eq!(result.from_address.as_deref(), Some("dagmara.pasek@sandbox.comarch.com"));
         let expected = fs::read("tests/nested/message_decrypted_content.eml").expect("Failed to read expected content");
         assert_eq!(result.signed_content.as_deref(), Some(expected.as_slice()));

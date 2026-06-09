@@ -41,6 +41,10 @@ pub fn extract_private_key_from_p12(data: &[u8], password: &str) -> Result<Vec<u
     if let Some(mac_data) = &pfx.mac_data {
         verify_pfx_mac(mac_data, auth_safe_bytes, password)?;
     } else {
+        // MacData is OPTIONAL in RFC 7292 because integrity may instead come from
+        // public-key mode (authSafe as SignedData), which we reject above - so this
+        // branch means no integrity protection at all. Mimics OpenSSL: a missing MAC
+        // is allowed, only a present-but-invalid MAC is a hard failure.
         eprintln!("Warning: PKCS#12 file has no MAC - integrity cannot be verified");
     }
 

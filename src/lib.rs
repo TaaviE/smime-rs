@@ -41,7 +41,7 @@ use crate::utils::set_panic_hook;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 #[cfg(feature = "decrypt")]
 pub use decrypt_verify::decrypt_and_verify_smime_from_eml_detailed;
-use mail_parser::{MessageParser, MimeHeaders};
+use mail_parser::{MessageParser, MimeHeaders, PartType};
 use pem::Pem;
 pub use types::{
     AnyPublicKey, CryptographyResult, SignatureChecks, SignerValidation, SigningSystem, SmimeValidationResult, TrustConfig, TrustStore,
@@ -50,7 +50,7 @@ pub use types::{
 
 use crate::cryptography_x509_verification::policy;
 use asn1::ObjectIdentifier;
-use utils::{ber_to_der_cms, extract_first_multipart_part_raw};
+use utils::ber_to_der_cms;
 use wasm_bindgen::prelude::*;
 
 fn sha256_fingerprint_hex(cert: &Certificate<'_>) -> Option<String> {
@@ -538,26 +538,31 @@ pub(crate) fn smime_content_kind(ct: &mail_parser::ContentType<'_>) -> SmimeCont
     SmimeContentKind::Other
 }
 
-fn extract_smime_clear_signed_content(
-    message: &mail_parser::Message<'_>,
-    eml_content: &[u8],
-    boundary: Option<&str>,
-) -> Result<(Vec<u8>, Vec<u8>), SmimeError> {
+fn extract_smime_clear_signed_content(message: &mail_parser::Message<'_>, eml_content: &[u8]) -> Result<(Vec<u8>, Vec<u8>), SmimeError> {
     let parts = &message.parts;
     if parts.len() < 2 {
         return Err(SmimeError::MsgNotEnoughParts);
     }
 
-    let signature_part =
-        parts.iter().find(|part| part.content_type().is_some_and(|ct| smime_content_kind(ct) == SmimeContentKind::Pkcs7Signature));
+    let sig_id = parts
+        .iter()
+        .position(|part| part.content_type().is_some_and(|ct| smime_content_kind(ct) == SmimeContentKind::Pkcs7Signature))
+        .ok_or(SmimeError::NoSigSubpart)?;
 
-    let signature_part = signature_part.ok_or(SmimeError::NoSigSubpart)?;
+    let p7s_der = ber_to_der_cms(parts[sig_id].contents()).map_err(|e| SmimeError::ParsePkcs7Sig { err: format!("BER-to-DER: {}", e) })?;
 
-    let signature_p7s_raw = signature_part.contents();
-    let p7s_der = ber_to_der_cms(signature_p7s_raw).map_err(|e| SmimeError::ParsePkcs7Sig { err: format!("BER-to-DER: {}", e) })?;
-
-    let content = extract_first_multipart_part_raw(eml_content, boundary.ok_or(SmimeError::MissingBoundary)?)
-        .map_err(|e| SmimeError::ExtractMultipart { err: e.to_string() })?
+    // RFC 1847: the signed content is the multipart/signed container's first body part.
+    // Reuse mail_parser's byte offsets for that part rather than rescanning for the
+    // boundary, so the verified bytes are exactly what the parser identified - avoiding a
+    // parser differential against an RFC-compliant MUA over boundary-line edge cases.
+    let PartType::Multipart(children) = &parts[0].body else {
+        return Err(SmimeError::MsgNotEnoughParts);
+    };
+    let content_id = children.iter().copied().find(|&id| id as usize != sig_id).ok_or(SmimeError::MsgNotEnoughParts)?;
+    let content_part = parts.get(content_id as usize).ok_or(SmimeError::MsgNotEnoughParts)?;
+    let content = eml_content
+        .get(content_part.offset_header as usize..content_part.offset_end as usize)
+        .ok_or_else(|| SmimeError::ExtractMultipart { err: "signed part offsets out of range".to_string() })?
         .to_vec();
 
     Ok((content, p7s_der))
@@ -759,7 +764,7 @@ pub fn verify_smime_from_eml_detailed(eml_text: String, trust: TrustConfig) -> S
     match smime_content_kind(content_type) {
         SmimeContentKind::SignedMultipart => {
             result.signing_system = SigningSystem::MultipartSignedSMIME;
-            let (detached_content, p7s_der) = match extract_smime_clear_signed_content(&message, eml_content, boundary.as_deref()) {
+            let (detached_content, p7s_der) = match extract_smime_clear_signed_content(&message, eml_content) {
                 Ok(res) => res,
                 Err(e) => {
                     result.failures.push(e);
@@ -862,12 +867,17 @@ fn prepare_signer<'a>(
                 CONTENT_TYPE_OID => {
                     has_content_type_attr = true;
                     let values = attr.values.unwrap_read().clone().collect::<Vec<_>>();
-                    if values.len() == 1 {
-                        if let Ok(oid) = asn1::parse_single::<ObjectIdentifier>(values[0].full_data()) {
-                            if oid != PKCS7_DATA_OID {
-                                result.failures.push(SmimeError::ContentTypeMismatch { idx });
+                    // RFC 5652 §11.1: attrValues MUST contain exactly one ContentType (an OID)
+                    match values.as_slice() {
+                        [value] => match asn1::parse_single::<ObjectIdentifier>(value.full_data()) {
+                            Ok(oid) => {
+                                if oid != PKCS7_DATA_OID {
+                                    result.failures.push(SmimeError::ContentTypeMismatch { idx });
+                                }
                             }
-                        }
+                            Err(_) => result.failures.push(SmimeError::MalformedContentTypeAttr { idx }),
+                        },
+                        _ => result.failures.push(SmimeError::MalformedContentTypeAttr { idx }),
                     }
                 }
                 SIGNING_TIME_OID => {
@@ -1200,12 +1210,14 @@ fn prepare_signed_data_verification<'a>(
         }
     };
 
-    let outer_from = match outer_from {
-        Some(address) => address,
-        None => return None,
-    };
-    result.from_address = outer_from.address.as_ref().map(|addr| email_domain_to_a_label(addr));
-    result.from_comment = outer_from.name.as_ref().map(|n| n.to_string());
+    match outer_from {
+        Some(address) => {
+            result.from_address = address.address.as_ref().map(|addr| email_domain_to_a_label(addr));
+            result.from_comment = address.name.as_ref().map(|n| n.to_string());
+        }
+        // RFC 5322 requires From, but its absence must not prevent verifying the signature itself
+        None => result.failures.push(SmimeError::MissingFrom),
+    }
     result.date = outer_date;
 
     let inner_message = match MessageParser::default().parse(content_for_display) {
@@ -1417,6 +1429,7 @@ pub(crate) fn verify_signed_data(
         let crypto_valid = entry.validation_details.checks.signature_matches_signed_data
             && (entry.validation_details.checks.message_digest_matches_content || !has_signed_attrs);
         entry.signature_valid = crypto_valid && cert_trusted;
+        // The outer From: header's authenticity is intended to be guaranteed by the MTA and DMARC, which is always more trustworthy than the contents of an untrustworthy signature.
         resolve_sender(&mut entry, inner_from_addr.as_ref(), inner_date, outer_date, &mut sender_resolver, result);
         result.signers.push(entry);
     }
@@ -1440,6 +1453,38 @@ fn econtent_looks_like_signed_attrs(content: &[u8]) -> bool {
         }
     }
     has_content_type && has_message_digest
+}
+
+#[cfg(test)]
+mod clear_signed_tests {
+    use super::*;
+
+    /// RFC 2046 allows linear whitespace after a boundary delimiter. A message whose
+    /// opening boundary carries trailing whitespace must still have its first body part
+    /// extracted as the signed content - not the signature part. The previous hand-rolled
+    /// scan required an exact `--boundary\r\n` and slid to the next boundary on a mismatch,
+    /// diverging from an RFC-compliant MUA.
+    #[test]
+    fn opening_boundary_with_trailing_whitespace_extracts_first_part() {
+        let mut eml: Vec<u8> = Vec::new();
+        eml.extend_from_slice(
+            b"Content-Type: multipart/signed; protocol=\"application/pkcs7-signature\"; boundary=\"SEP\"\r\n\r\n\
+              --SEP \r\n\
+              Content-Type: text/plain\r\n\r\n\
+              SIGNED CONTENT BODY\r\n\
+              --SEP\r\n\
+              Content-Type: application/pkcs7-signature\r\n\r\n",
+        );
+        // Minimal valid CMS ContentInfo (id-data) so signature BER parsing succeeds.
+        eml.extend_from_slice(&[0x30, 0x0B, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x01]);
+        eml.extend_from_slice(b"\r\n--SEP--\r\n");
+
+        let message = MessageParser::default().parse(&eml).unwrap();
+        let (content, _p7s) = extract_smime_clear_signed_content(&message, &eml).unwrap();
+
+        assert!(content.windows(19).any(|w| w == b"SIGNED CONTENT BODY"), "extracted the wrong part: {:?}", content);
+        assert!(!content.windows(15).any(|w| w == b"pkcs7-signature"), "extracted the signature part as signed content");
+    }
 }
 
 #[cfg(test)]

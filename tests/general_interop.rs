@@ -46,6 +46,18 @@ mod tests {
     }
 
     #[test]
+    fn test_pkcs7_mime_missing_from() {
+        let file_path = "tests/general/pkcs7-mime.eml";
+        let eml = fs::read_to_string(file_path).expect("Failed to read file");
+        let eml: String = eml.lines().filter(|line| !line.starts_with("From:")).map(|line| format!("{line}\r\n")).collect();
+        let result = verify_smime_from_eml_detailed(eml, vec![TrustStore::Debug].into());
+        println!("Result for {}: {:#?}", file_path, result);
+
+        assert_eq!(result.from_address, None);
+        assert!(result.failures.contains(&SmimeError::MissingFrom));
+    }
+
+    #[test]
     fn test_smime_enc_signed_complex_injected_minimal_legacy_reply() {
         let file_path = "tests/general/smime-enc-signed-complex-injected-minimal-legacy-reply.eml";
         let eml = fs::read_to_string(file_path).expect("Failed to read file");

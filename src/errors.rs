@@ -14,6 +14,7 @@ pub enum SmimeError {
     ParseEml,
     MissingContentType,
     MissingBoundary,
+    MissingFrom,
     NoSmimeSig,
     BuildVerifier {
         err: String,
@@ -81,6 +82,9 @@ pub enum SmimeError {
         idx: usize,
     },
     ContentTypeMismatch {
+        idx: usize,
+    },
+    MalformedContentTypeAttr {
         idx: usize,
     },
     UnexpectedEContentType,
@@ -158,6 +162,7 @@ impl SmimeError {
             SmimeError::ParseEml => "err-parse-eml",
             SmimeError::MissingContentType => "err-missing-content-type",
             SmimeError::MissingBoundary => "err-missing-boundary",
+            SmimeError::MissingFrom => "err-missing-from",
             SmimeError::NoSmimeSig => "err-no-smime-sig",
             SmimeError::BuildVerifier { .. } => "err-build-verifier",
             SmimeError::ParseInner => "err-parse-inner",
@@ -182,6 +187,7 @@ impl SmimeError {
             SmimeError::OtherNameParseError { .. } => "err-other-name-parse",
             SmimeError::MissingContentTypeAttr { .. } => "err-missing-content-type-attr",
             SmimeError::ContentTypeMismatch { .. } => "err-content-type-mismatch",
+            SmimeError::MalformedContentTypeAttr { .. } => "err-malformed-content-type-attr",
             SmimeError::UnexpectedEContentType => "err-unexpected-econtent-type",
             SmimeError::DecryptionFailed { .. } => "err-decryption-failed",
             SmimeError::UnsupportedKeyEncryptionAlg { .. } => "err-unsupported-key-encryption-alg",
@@ -254,7 +260,9 @@ impl SmimeError {
                 args.insert("err".to_string(), FluentValue::from(err.clone()));
                 args.insert("hex_data".to_string(), FluentValue::from(hex_data.clone()));
             }
-            SmimeError::MissingContentTypeAttr { idx } | SmimeError::ContentTypeMismatch { idx } => {
+            SmimeError::MissingContentTypeAttr { idx }
+            | SmimeError::ContentTypeMismatch { idx }
+            | SmimeError::MalformedContentTypeAttr { idx } => {
                 args.insert("idx".to_string(), FluentValue::from(*idx));
             }
             SmimeError::UnsupportedKeyEncryptionAlg { alg } | SmimeError::UnsupportedContentEncryptionAlg { alg } => {
@@ -263,6 +271,7 @@ impl SmimeError {
             SmimeError::ParseEml
             | SmimeError::MissingContentType
             | SmimeError::MissingBoundary
+            | SmimeError::MissingFrom
             | SmimeError::NoSmimeSig
             | SmimeError::ParseInner
             | SmimeError::MsgNotEnoughParts
@@ -333,6 +342,9 @@ impl SmimeError {
 
         let lang_id: LanguageIdentifier = lang.parse().unwrap_or_else(|_| "en-UK".parse().unwrap());
         let mut bundle = FluentBundle::new(vec![lang_id]);
+        // Deliberate: interpolated values (subject names, addresses) can contain RTL
+        // text, and terminal output needs FSI/PDI bidi isolation just like a GUI.
+        bundle.set_use_isolating(true);
         bundle.add_resource(res).expect("Failed to add FTL resources to the bundle.");
 
         let msg = match bundle.get_message(self.identifier()) {

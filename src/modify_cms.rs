@@ -58,7 +58,7 @@ struct ModifyArgs {
     #[arg(long)]
     ocsp_path: Option<PathBuf>,
 
-    /// Do not add OCSP responses
+    /// Add an OCSP response (from --ocsp-path, or fetched if not provided)
     #[arg(long, default_value = "false")]
     ocsp: bool,
 }
@@ -106,6 +106,15 @@ fn is_pkcs7_content_type(part: &mail_parser::MessagePart) -> bool {
                     || subtype.eq_ignore_ascii_case("x-pkcs7-signature")
             })
     })
+}
+
+// Only the scheme is restricted so this experimental test utility stays usable in test environments.
+fn validate_fetch_url(raw: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(raw).map_err(|e| format!("Invalid URL '{}': {}", raw, e))?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(()),
+        s => Err(format!("Disallowed URL scheme '{}' in '{}'", s, raw)),
+    }
 }
 
 fn get_crl_urls(cert: &PyCertificate<'_>) -> Vec<String> {
@@ -362,7 +371,7 @@ fn run_modify(args: ModifyArgs) -> Result<(), Box<dyn std::error::Error>> {
             let client = reqwest::blocking::Client::new();
             for url in &urls {
                 if let Err(e) = validate_fetch_url(url) {
-                    println!("Warning: Skipping invalid CRL URL: {}", e);
+                    println!("Warning: Skipping CRL URL: {}", e);
                     continue;
                 }
                 println!("Fetching CRL from {}", url);
@@ -397,7 +406,9 @@ fn run_modify(args: ModifyArgs) -> Result<(), Box<dyn std::error::Error>> {
         crls.push(RevocationInfoChoice::Crl(captured_content));
     }
 
-    let ocsp_bytes = if let Some(ocsp_path) = args.ocsp_path {
+    let ocsp_bytes = if !args.ocsp {
+        Vec::new()
+    } else if let Some(ocsp_path) = args.ocsp_path {
         fs::read(&ocsp_path).map_err(|e| format!("Failed to read OCSP response file {:?}: {}", ocsp_path, e))?
     } else {
         let urls = get_ocsp_urls(&py_subject_cert);
@@ -410,7 +421,7 @@ fn run_modify(args: ModifyArgs) -> Result<(), Box<dyn std::error::Error>> {
             let client = reqwest::blocking::Client::new();
             for url in &urls {
                 if let Err(e) = validate_fetch_url(url) {
-                    println!("Warning: Skipping invalid OCSP URL: {}", e);
+                    println!("Warning: Skipping OCSP URL: {}", e);
                     continue;
                 }
                 println!("Fetching OCSP from {}", url);
@@ -431,7 +442,7 @@ fn run_modify(args: ModifyArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    if !ocsp_bytes.is_empty() && args.ocsp {
+    if !ocsp_bytes.is_empty() {
         let choice = RevocationInfoChoice::Other(OtherRevocationInfoFormat {
             other_rev_info_format: x509_oid::RI_OCSP_OID,
             other_rev_info: asn1::parse_single::<asn1::Tlv<'_>>(&ocsp_bytes)
@@ -538,22 +549,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn validate_fetch_url(raw: &str) -> Result<(), String> {
-    let parsed = url::Url::parse(raw).map_err(|e| format!("Invalid URL '{}': {}", raw, e))?;
-    match parsed.scheme() {
-        "http" | "https" => {}
-        s => return Err(format!("Disallowed URL scheme '{}' in '{}'", s, raw)),
-    }
-    match parsed.host() {
-        Some(url::Host::Ipv4(ip)) if ip.is_loopback() || ip.is_private() || ip.is_link_local() => {
-            Err(format!("URL '{}' points to a private/internal address", raw))
-        }
-        Some(url::Host::Ipv6(ip)) if ip.is_loopback() => Err(format!("URL '{}' points to a loopback address", raw)),
-        Some(url::Host::Domain(d)) if d.eq_ignore_ascii_case("localhost") => Err(format!("URL '{}' points to localhost", raw)),
-        None => Err(format!("URL '{}' has no host", raw)),
-        _ => Ok(()),
-    }
-}
 fn create_ocsp_request(cert: &Certificate<'_>, issuer: &Certificate<'_>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     use sha1::Digest;
     let mut hasher = sha1::Sha1::new();

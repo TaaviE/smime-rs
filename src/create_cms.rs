@@ -32,6 +32,8 @@ enum Commands {
     },
     /// Generate stapled-OCSP validity-extension fixtures
     Ocsp,
+    /// Generate nested sign+encrypt fixtures
+    Nested,
     /// Run all generators
     All,
 }
@@ -755,6 +757,7 @@ fn main() {
             EncryptCommands::MultiRecipient => gen_multi_recipient_fixtures(),
         },
         Commands::Ocsp => gen_ocsp_stapling_fixtures(),
+        Commands::Nested => gen_nested_fixtures(),
         Commands::All => run_all(),
     }
 }
@@ -1793,15 +1796,18 @@ fn build_stapled_cms(
     let digest_algs = [digest_alg];
     let signer_infos = [signer_info];
 
+    // RFC 5652 §5.1: version 5 only because of the OtherRevocationInfoFormat staples
+    let (version, crls) =
+        if crl_choices.is_empty() { (1, None) } else { (5, Some(Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(crl_choices)))) };
     let signed_data = SignedData {
-        version: 5,
+        version,
         digest_algorithms: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(&digest_algs)),
         content_info: ContentInfo {
             content_type: asn1::DefinedByMarker::marker(),
             content: Content::Data(Some(asn1::Explicit::new(content))),
         },
         certificates: Some(Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(cert_choices))),
-        crls: Some(Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(crl_choices))),
+        crls,
         signer_infos: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(&signer_infos)),
     };
 
@@ -2210,5 +2216,70 @@ fn gen_ocsp_stapling_fixtures() {
         let cms =
             build_stapled_cms(&leaf_der, &root_der, &[&responder_der], &leaf_serial, &root_subject_der, &[&ocsp], content, &leaf_sign);
         write("openssl_responder_good", &cms);
+    }
+}
+
+/// Wrap a CMS ContentInfo as a bare application/pkcs7-mime MIME entity, the form
+/// a sign/encrypt layer takes when nested inside another CMS layer.
+fn mime_pkcs7_entity(cms_der: &[u8], smime_type: &str) -> String {
+    let b64 = BASE64_STANDARD.encode(cms_der);
+    let body: String = b64.as_bytes().chunks(76).map(|c| std::str::from_utf8(c).unwrap()).collect::<Vec<_>>().join("\r\n");
+    format!(
+        "Content-Type: application/pkcs7-mime;\r\n smime-type={smime_type}; name=\"smime.p7m\"\r\nContent-Disposition: attachment; filename=\"smime.p7m\"\r\nContent-Transfer-Encoding: base64\r\n\r\n{body}\r\n"
+    )
+}
+
+fn gen_nested_fixtures() {
+    // Keys: root CA = test_rsa_sign, signing leaf & encryption recipient = test_rsa.
+    let root_sign = rsa_signer("tests/keys/test_rsa_sign.key");
+    let leaf_sign = rsa_signer("tests/keys/test_rsa.key");
+    let root_spki = spki_der_of("tests/keys/test_rsa_sign.pem");
+    let leaf_spki = spki_der_of("tests/keys/test_rsa.pem");
+    let recipient_pem = fs::read_to_string("tests/keys/test_rsa.pem").unwrap();
+
+    // Self-signed root CA, trust anchor for the tests via ca_file_pem.
+    let root_name_der = build_name_der("Test Nested Root CA");
+    let (root_der, _root_serial, root_subject_der) = build_cert(
+        &root_name_der,
+        "Test Nested Root CA",
+        &root_spki,
+        validity_utc((2024, 1, 1), (2035, 1, 1)),
+        &[(oid::BASIC_CONSTRAINTS_OID, true, ev_basic_constraints_ca()), (oid::KEY_USAGE_OID, true, ev_key_usage_ca())],
+        &root_sign,
+    );
+    write_pem_cert(std::path::Path::new("tests/general"), "nested_root_ca.pem", &root_der);
+
+    let (leaf_der, leaf_serial, _) = build_cert(
+        &root_subject_der,
+        "Kalle Krüptija",
+        &leaf_spki,
+        validity_utc((2024, 1, 1), (2035, 1, 1)),
+        &[(oid::EXTENDED_KEY_USAGE_OID, false, ev_eku(&[oid::EKU_EMAIL_PROTECTION_OID]))],
+        &root_sign,
+    );
+
+    let sign = |content: &[u8]| build_stapled_cms(&leaf_der, &root_der, &[], &leaf_serial, &root_subject_der, &[], content, &leaf_sign);
+    let encrypt = |plaintext: &[u8]| {
+        smime::encrypt::encrypt(&[recipient_pem.clone()], plaintext, smime::encrypt::ContentCipher::Aes256Cbc, true)
+            .expect("encrypt")
+            .expect("recipient")
+    };
+
+    // E(S(Data))
+    {
+        let content = b"Content-Type: text/plain\r\n\r\nsigned then encrypted\r\n";
+        let signed_entity = mime_pkcs7_entity(&sign(content), "signed-data");
+        let env = encrypt(signed_entity.as_bytes());
+        write_fixture_eml("tests/general/test_signed_then_encrypted.eml", &env, "Signed then Encrypted", "enveloped-data");
+    }
+
+    // E(S(E(S(Data)))) - two layers of encrypt+sign
+    {
+        let content = b"Content-Type: text/plain\r\n\r\ninnermost content\r\n";
+        let s1 = mime_pkcs7_entity(&sign(content), "signed-data");
+        let e1 = mime_pkcs7_entity(&encrypt(s1.as_bytes()), "enveloped-data");
+        let s2 = mime_pkcs7_entity(&sign(e1.as_bytes()), "signed-data");
+        let e2 = encrypt(s2.as_bytes());
+        write_fixture_eml("tests/general/test_double_encrypted_signed.eml", &e2, "Double Encrypted Signed", "enveloped-data");
     }
 }

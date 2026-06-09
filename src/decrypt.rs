@@ -198,6 +198,8 @@ fn decrypt_ktri_cek(private_key_der: &[u8], recipient_info: &KeyTransRecipientIn
     let encrypted_key = recipient_info.encrypted_key;
 
     let cek = match &recipient_info.key_encryption_algorithm.params {
+        // Padding errors are reported as-is: there is no realistic padding oracle here, as S/MIME
+        // decryption failures are communicated to the user, not back to an attacker.
         AlgorithmParameters::RSA(_) => private_key
             .decrypt(Pkcs1v15Encrypt, encrypted_key)
             .map_err(|e| SmimeError::DecryptionFailed { err: format!("RSAES-PKCS1-v1_5 key decryption: {}", e) }),
@@ -773,11 +775,13 @@ fn decrypt_aes_ccm(key: &[u8], nonce: &[u8], aad: &[u8], ciphertext: &[u8], tag:
         return Err(SmimeError::DecryptionFailed { err: format!("CCM tag length {} does not match icvLen {}", tag.len(), tag_len) });
     }
 
-    // RFC 5084 §3.1: ICVlen (tag) valid 4,6,8,10,12,14,16; nonce 7..13 octets.
-    // The ccm crate requires these as type-level params, so dispatch via nested macros.
-    if !matches!(tag_len, 4 | 6 | 8 | 10 | 12 | 14 | 16) {
+    // RFC 5084 §3.1 allows ICVlen 4..16, but short tags make forgery cheap and the
+    // sender chooses the length, so require at least the RFC 5084 default of 12.
+    // Nonce must be 7..13 octets. The ccm crate requires these as type-level params,
+    // so dispatch via nested macros.
+    if !matches!(tag_len, 12 | 14 | 16) {
         return Err(SmimeError::UnsupportedContentEncryptionAlg {
-            alg: format!("AES-CCM ICVlen {} not valid per RFC 5084 (must be 4,6,8,10,12,14,16)", tag_len),
+            alg: format!("AES-CCM ICVlen {} not supported (must be 12, 14 or 16)", tag_len),
         });
     }
     if !(7..=13).contains(&nonce.len()) {
@@ -803,7 +807,7 @@ fn decrypt_aes_ccm(key: &[u8], nonce: &[u8], aad: &[u8], ciphertext: &[u8], tag:
                 .map_err(|e| SmimeError::DecryptionFailed { err: format!("AES-CCM: {}", e) })?
         }};
     }
-    // Dispatch over all valid (key, tag, nonce) triples per RFC 5084 §3.1
+    // Dispatch over all supported (key, tag, nonce) triples
     macro_rules! ccm_nonce_dispatch {
         ($aes:ty, $tag_ty:ty, $tag_len_val:literal) => {
             match nonce.len() {
@@ -821,10 +825,6 @@ fn decrypt_aes_ccm(key: &[u8], nonce: &[u8], aad: &[u8], ciphertext: &[u8], tag:
     macro_rules! ccm_tag_dispatch {
         ($aes:ty) => {
             match tag_len {
-                4 => ccm_nonce_dispatch!($aes, ccm::consts::U4, 4),
-                6 => ccm_nonce_dispatch!($aes, ccm::consts::U6, 6),
-                8 => ccm_nonce_dispatch!($aes, ccm::consts::U8, 8),
-                10 => ccm_nonce_dispatch!($aes, ccm::consts::U10, 10),
                 12 => ccm_nonce_dispatch!($aes, ccm::consts::U12, 12),
                 14 => ccm_nonce_dispatch!($aes, ccm::consts::U14, 14),
                 16 => ccm_nonce_dispatch!($aes, ccm::consts::U16, 16),
