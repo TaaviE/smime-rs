@@ -4,6 +4,7 @@
 //!
 //! Recipient handling matches smime-js: RSA key transport via OAEP (SHA-256/MGF1-SHA256)
 //! or PKCS#1 v1.5, and ECDH KARI (P-256/384/521) with X9.63-KDF(SHA-256) + AES-256 key wrap.
+//! X25519 recipients use KARI per RFC 8418 with HKDF-SHA256 + AES-256 key wrap.
 
 use crate::cryptography_x509::certificate::Certificate;
 use crate::cryptography_x509::common::{
@@ -67,8 +68,8 @@ fn encrypt_aes256_gcm(cek: &[u8], nonce: &[u8; 12], aad: &[u8], plaintext: &[u8]
     (buf, tag.into())
 }
 
-/// Validate a recipient certificate's public key against smime-js's accepted set:
-/// RSA 2048-4096 bits, or EC P-256/384/521.
+/// Validate a recipient certificate's public key:
+/// RSA 2048-4096 bits, EC P-256/384/521, or X25519.
 pub fn validate_cert_key(cert_pem: &str) -> Result<(), SmimeError> {
     let der = pem::parse(cert_pem).map_err(|e| SmimeError::Raw(format!("invalid certificate PEM: {}", e)))?.into_contents();
     let cert: Certificate = asn1::parse_single(&der).map_err(|e| SmimeError::Raw(format!("invalid certificate: {}", e)))?;
@@ -94,6 +95,7 @@ fn validate_spki(cert: &Certificate) -> Result<(), SmimeError> {
                 Err(SmimeError::Raw(format!("unsupported EC curve: {}", curve)))
             }
         }
+        AlgorithmParameters::X25519 => Ok(()),
         other => Err(SmimeError::Raw(format!("unsupported recipient key type: {:?}", other))),
     }
 }
@@ -205,27 +207,96 @@ fn build_kari(cek: &[u8], cert: &Certificate, curve: &asn1::ObjectIdentifier) ->
     asn1::write_single(&RecipientInfo::KeyAgreeRecipientInfo(kari)).map_err(|e| SmimeError::Raw(format!("KARI DER: {}", e)))
 }
 
-/// Build a RecipientInfo for one certificate, or `None` if its key type is unsupported.
-/// Failures for a supported key type are propagated.
-fn build_recipient_info(cek: &[u8], cert: &Certificate, pkcs1v15: bool) -> Result<Option<Vec<u8>>, SmimeError> {
+/// Build a KeyAgreeRecipientInfo for an X25519 recipient (RFC 8418)
+fn build_kari_x25519(cek: &[u8], cert: &Certificate) -> Result<Vec<u8>, SmimeError> {
+    let recipient_pk_bytes: [u8; 32] = cert
+        .tbs_cert
+        .spki
+        .subject_public_key
+        .as_bytes()
+        .try_into()
+        .map_err(|_| SmimeError::Raw("X25519 public key must be 32 bytes".into()))?;
+
+    let eph_sk = x25519_dalek::StaticSecret::from(random_bytes::<32>());
+    let eph_pk = x25519_dalek::PublicKey::from(&eph_sk);
+    let shared = eph_sk.diffie_hellman(&x25519_dalek::PublicKey::from(recipient_pk_bytes));
+    // RFC 7748 §6 / RFC 8418 §2: reject an all-zero shared secret (low-order recipient key).
+    use p256::elliptic_curve::subtle::ConstantTimeEq;
+    if shared.as_bytes().ct_eq(&[0u8; 32]).into() {
+        return Err(SmimeError::Raw("X25519 shared secret is all-zero".into()));
+    }
+
+    // ECC-CMS-SharedInfo (RFC 8418 §2): keyInfo = AES-256-WRAP, suppPubInfo = KEK length in bits.
+    let shared_info = EccCmsSharedInfo {
+        key_info: AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Other(oid::AES256_WRAP, None) },
+        entity_u_info: None,
+        supp_pub_info: &256u32.to_be_bytes(),
+    };
+    let shared_info_der = asn1::write_single(&shared_info).map_err(|e| SmimeError::Raw(format!("SharedInfo DER: {}", e)))?;
+
+    // RFC 8418 §2.2: no ukm → no salt; KEK = HKDF-Expand(HKDF-Extract(no salt, Z), SharedInfo, 32).
+    let mut kek = [0u8; 32];
+    hkdf::Hkdf::<sha2::Sha256>::new(None, shared.as_bytes())
+        .expand(&shared_info_der, &mut kek)
+        .map_err(|e| SmimeError::Raw(format!("HKDF expand: {}", e)))?;
+
+    let mut wrapped_cek = vec![0u8; cek.len() + 8];
+    aes_kw::KwAes256::new_from_slice(&kek)
+        .unwrap()
+        .wrap_key(cek, &mut wrapped_cek)
+        .map_err(|e| SmimeError::Raw(format!("AES key wrap: {}", e)))?;
+
+    // keyEncryptionAlgorithm = dhSinglePass-stdDH-hkdf-sha256-scheme with AES-256-WRAP as parameter.
+    let wrap_alg_der = asn1::write_single(&AlgorithmIdentifier {
+        oid: asn1::DefinedByMarker::marker(),
+        params: AlgorithmParameters::Other(oid::AES256_WRAP, None),
+    })
+    .map_err(|e| SmimeError::Raw(format!("wrap alg DER: {}", e)))?;
+    let wrap_alg_tlv: asn1::Tlv = asn1::parse_single(&wrap_alg_der).map_err(|e| SmimeError::Raw(format!("wrap alg TLV: {}", e)))?;
+
+    let ias = IssuerAndSerialNumber { issuer: cert.tbs_cert.issuer.clone(), serial_number: cert.tbs_cert.serial.clone() };
+    let rek = RecipientEncryptedKey { rid: KeyAgreeRecipientIdentifier::IssuerAndSerialNumber(ias), encrypted_key: &wrapped_cek };
+    let reks = [rek];
+    // RFC 8418 §3.2: originatorKey algorithm MUST be id-X25519, public key is the raw 32 bytes.
+    let originator_key = OriginatorPublicKey {
+        algorithm: AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::X25519 },
+        public_key: asn1::BitString::new(eph_pk.as_bytes(), 0).unwrap(),
+    };
+    let kari = KeyAgreeRecipientInfo {
+        version: 3,
+        originator: OriginatorIdentifierOrKey::OriginatorKey(originator_key),
+        ukm: None,
+        key_encryption_algorithm: AlgorithmIdentifier {
+            oid: asn1::DefinedByMarker::marker(),
+            params: AlgorithmParameters::Other(oid::DH_HKDF_SHA256, Some(wrap_alg_tlv)),
+        },
+        recipient_encrypted_keys: Asn1ReadableOrWritable::new_write(asn1::SequenceOfWriter::new(&reks)),
+    };
+    asn1::write_single(&RecipientInfo::KeyAgreeRecipientInfo(kari)).map_err(|e| SmimeError::Raw(format!("KARI DER: {}", e)))
+}
+
+/// Build a RecipientInfo for one certificate.
+/// An unsupported key type or size is anerror: silently dropping a recipient would produce
+/// messages that some recipients cannot read without any indication to the sender.
+fn build_recipient_info(cek: &[u8], cert: &Certificate, pkcs1v15: bool) -> Result<Vec<u8>, SmimeError> {
+    validate_spki(cert)?;
     match &cert.tbs_cert.spki.algorithm.params {
-        AlgorithmParameters::RSA(_) => {
-            validate_spki(cert)?;
-            build_ktri(cek, cert, pkcs1v15).map(Some)
-        }
-        AlgorithmParameters::ECDSA(Some(EcParameters::NamedCurve(curve)))
-            if *curve == oid::EC_SECP256R1 || *curve == oid::EC_SECP384R1 || *curve == oid::EC_SECP521R1 =>
-        {
-            build_kari(cek, cert, curve).map(Some)
-        }
-        _ => Ok(None),
+        AlgorithmParameters::RSA(_) => build_ktri(cek, cert, pkcs1v15),
+        AlgorithmParameters::ECDSA(Some(EcParameters::NamedCurve(curve))) => build_kari(cek, cert, curve),
+        AlgorithmParameters::X25519 => build_kari_x25519(cek, cert),
+        _ => unreachable!("validate_spki accepted an unsupported key type"),
     }
 }
 
-/// Encrypt `plaintext` to the given recipient certificates (PEM). Returns the DER-encoded
-/// CMS ContentInfo, or `None` if no certificate yielded a usable recipient (matching
-/// smime-js's `false` return). `pkcs1v15` selects RSA PKCS#1 v1.5 over OAEP.
-pub fn encrypt(certs_pem: &[String], plaintext: &[u8], cipher: ContentCipher, pkcs1v15: bool) -> Result<Option<Vec<u8>>, SmimeError> {
+/// Encrypt `plaintext` to the given recipient certificates (PEM).
+/// An empty `certs_pem` or any certificate with an unsupported key returns an error.
+/// Returns the DER-encoded CMS ContentInfo.
+/// `pkcs1v15` selects RSA PKCS#1 v1.5 over OAEP.
+pub fn encrypt(certs_pem: &[String], plaintext: &[u8], cipher: ContentCipher, pkcs1v15: bool) -> Result<Vec<u8>, SmimeError> {
+    if certs_pem.is_empty() {
+        return Err(SmimeError::Raw("no recipient certificates provided".into()));
+    }
+
     let cek: [u8; 32] = random_bytes();
 
     // Parse certs first so their DER backs the borrowed issuer/serial in each RecipientInfo.
@@ -238,13 +309,7 @@ pub fn encrypt(certs_pem: &[String], plaintext: &[u8], cipher: ContentCipher, pk
     let mut ris_der: Vec<Vec<u8>> = Vec::new();
     for der in &cert_ders {
         let cert: Certificate = asn1::parse_single(der).map_err(|e| SmimeError::Raw(format!("invalid certificate: {}", e)))?;
-        if let Some(ri) = build_recipient_info(&cek, &cert, pkcs1v15)? {
-            ris_der.push(ri);
-        }
-    }
-
-    if ris_der.is_empty() {
-        return Ok(None);
+        ris_der.push(build_recipient_info(&cek, &cert, pkcs1v15)?);
     }
 
     let ris: Vec<RecipientInfo> = ris_der.iter().map(|d| asn1::parse_single(d).unwrap()).collect();
@@ -301,5 +366,5 @@ pub fn encrypt(certs_pem: &[String], plaintext: &[u8], cipher: ContentCipher, pk
         }
     };
 
-    Ok(Some(der))
+    Ok(der)
 }

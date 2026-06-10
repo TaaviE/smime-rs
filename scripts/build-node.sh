@@ -20,8 +20,6 @@ wasm-pack build --release --target nodejs --scope zone-eu --out-dir pkg-node --o
 mv pkg-node/smime_wasm.js pkg-node/smime_wasm_bg.wasm \
    pkg-node/smime_wasm.d.ts pkg-node/smime_wasm_bg.wasm.d.ts pkg-node/lib/
 
-cp -r src/locales pkg-node/
-
 # Restore the committed files, syncing the Cargo version (from wasm-pack's output) into package.json.
 version=$(node -p "require('./pkg-node/package.json').version")
 node -e '

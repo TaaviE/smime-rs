@@ -24,7 +24,7 @@ fn roundtrip(cert_path: &str, key_path: &str, cipher: ContentCipher, pkcs1v15: b
     let plaintext = b"Content-Type: text/plain\r\n\r\nHello, S/MIME encryption!\r\n";
     let certs = vec![fs::read_to_string(cert_path).unwrap()];
 
-    let der = encrypt(&certs, plaintext, cipher, pkcs1v15).unwrap().expect("encrypt produced no recipients");
+    let der = encrypt(&certs, plaintext, cipher, pkcs1v15).unwrap();
 
     let keys =
         DecryptionKeys { private_key_der: &pem_contents(key_path), recipient_cert_der: &pem_contents(cert_path), ..Default::default() };
@@ -63,10 +63,47 @@ fn p521_cbc() {
 }
 
 #[test]
+fn x25519_cbc() {
+    roundtrip("tests/keys/test_x25519.pem", "tests/keys/test_x25519.key", ContentCipher::Aes256Cbc, false);
+}
+
+#[test]
+fn x25519_gcm() {
+    roundtrip("tests/keys/test_x25519.pem", "tests/keys/test_x25519.key", ContentCipher::Aes256Gcm, false);
+}
+
+#[test]
+fn x25519_kari_uses_rfc8418_hkdf_sha256() {
+    use smime::cryptography_x509::oid;
+    use smime::cryptography_x509::pkcs7::{OriginatorIdentifierOrKey, RecipientInfo};
+
+    let certs = vec![fs::read_to_string("tests/keys/test_x25519.pem").unwrap()];
+    let der = encrypt(&certs, b"x", ContentCipher::Aes256Cbc, false).unwrap();
+    let ci: ContentInfo = asn1::parse_single(&der).unwrap();
+    let enveloped = match ci.content {
+        Content::EnvelopedData(e) => e.into_inner(),
+        _ => panic!("expected EnvelopedData"),
+    };
+    let ris: Vec<RecipientInfo> = enveloped.recipient_infos.unwrap_read().clone().collect();
+    let kari = match &ris[0] {
+        RecipientInfo::KeyAgreeRecipientInfo(kari) => kari,
+        _ => panic!("expected KARI"),
+    };
+    assert_eq!(kari.version, 3);
+    assert_eq!(kari.key_encryption_algorithm.oid(), &oid::DH_HKDF_SHA256);
+    let originator_key = match &kari.originator {
+        OriginatorIdentifierOrKey::OriginatorKey(key) => key,
+        _ => panic!("expected originatorKey"),
+    };
+    assert_eq!(originator_key.algorithm.oid(), &oid::X25519_OID);
+    assert_eq!(originator_key.public_key.as_bytes().len(), 32);
+}
+
+#[test]
 fn multi_recipient_rsa_and_ec() {
     let plaintext = b"multi recipient body";
     let certs = vec![fs::read_to_string("tests/keys/test_rsa.pem").unwrap(), fs::read_to_string("tests/keys/test_p256.pem").unwrap()];
-    let der = encrypt(&certs, plaintext, ContentCipher::Aes256Cbc, false).unwrap().unwrap();
+    let der = encrypt(&certs, plaintext, ContentCipher::Aes256Cbc, false).unwrap();
 
     // Each recipient can independently recover the plaintext.
     let rsa_keys = DecryptionKeys {
@@ -86,9 +123,9 @@ fn multi_recipient_rsa_and_ec() {
 
 #[test]
 fn version_reflects_built_recipient_infos() {
-    // Ed25519 is skipped, leaving only a v0 KTRI → version 0 per RFC 5652 §6.1.
-    let certs = vec![fs::read_to_string("tests/keys/test_rsa.pem").unwrap(), fs::read_to_string("tests/keys/test_ed25519.pem").unwrap()];
-    let der = encrypt(&certs, b"x", ContentCipher::Aes256Cbc, false).unwrap().unwrap();
+    // KTRI-only recipients → version 0 per RFC 5652 §6.1.
+    let certs = vec![fs::read_to_string("tests/keys/test_rsa.pem").unwrap()];
+    let der = encrypt(&certs, b"x", ContentCipher::Aes256Cbc, false).unwrap();
     let ci: ContentInfo = asn1::parse_single(&der).unwrap();
     match ci.content {
         Content::EnvelopedData(e) => assert_eq!(e.into_inner().version, 0),
@@ -97,7 +134,7 @@ fn version_reflects_built_recipient_infos() {
 
     // A KARI recipient still forces version 2.
     let certs = vec![fs::read_to_string("tests/keys/test_rsa.pem").unwrap(), fs::read_to_string("tests/keys/test_p256.pem").unwrap()];
-    let der = encrypt(&certs, b"x", ContentCipher::Aes256Cbc, false).unwrap().unwrap();
+    let der = encrypt(&certs, b"x", ContentCipher::Aes256Cbc, false).unwrap();
     let ci: ContentInfo = asn1::parse_single(&der).unwrap();
     match ci.content {
         Content::EnvelopedData(e) => assert_eq!(e.into_inner().version, 2),
@@ -106,18 +143,32 @@ fn version_reflects_built_recipient_infos() {
 }
 
 #[test]
-fn no_valid_recipients_returns_none() {
-    // Ed25519 cert is not a supported encryption recipient → None.
+fn unsupported_recipient_is_an_error() {
+    // Ed25519 cert is not a supported encryption recipient → error.
     let certs = vec![fs::read_to_string("tests/keys/test_ed25519.pem").unwrap()];
-    let out = encrypt(&certs, b"x", ContentCipher::Aes256Cbc, false).unwrap();
-    assert!(out.is_none());
+    assert!(encrypt(&certs, b"x", ContentCipher::Aes256Cbc, false).is_err());
+
+    // An unsupported recipient among supported ones must not be silently dropped.
+    let certs = vec![fs::read_to_string("tests/keys/test_rsa.pem").unwrap(), fs::read_to_string("tests/keys/test_ed25519.pem").unwrap()];
+    assert!(encrypt(&certs, b"x", ContentCipher::Aes256Cbc, false).is_err());
+}
+
+#[test]
+fn no_recipients_is_an_error() {
+    assert!(encrypt(&[], b"x", ContentCipher::Aes256Cbc, false).is_err());
 }
 
 #[test]
 fn validate_cert_key_parity() {
     use smime::encrypt::validate_cert_key;
     // Supported types pass.
-    for p in ["tests/keys/test_rsa.pem", "tests/keys/test_p256.pem", "tests/keys/test_p384.pem", "tests/keys/test_p521.pem"] {
+    for p in [
+        "tests/keys/test_rsa.pem",
+        "tests/keys/test_p256.pem",
+        "tests/keys/test_p384.pem",
+        "tests/keys/test_p521.pem",
+        "tests/keys/test_x25519.pem",
+    ] {
         validate_cert_key(&fs::read_to_string(p).unwrap()).unwrap_or_else(|e| panic!("{} should validate: {:?}", p, e));
     }
     // Ed25519 is rejected.

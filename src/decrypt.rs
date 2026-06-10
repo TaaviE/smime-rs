@@ -327,10 +327,24 @@ fn decrypt_kari_cek(
         PrivateKeyInfoRef::from_der(private_key_der).map_err(|e| SmimeError::PrivateKeyParseFailed { err: format!("PKCS#8: {}", e) })?;
     let key_alg_oid = pki.algorithm.oid;
 
+    if key_alg_oid.to_string() == oid::X448_OID.to_string() {
+        return Err(SmimeError::UnsupportedKeyEncryptionAlg { alg: "X448 key agreement is not supported".into() });
+    }
+
     let is_x25519 = key_alg_oid.to_string() == oid::X25519_OID.to_string();
 
     let z: Vec<u8> = if is_x25519 {
         // RFC 8418: X25519 key agreement
+        // RFC 8418 §7 assigns only the stdDH schemes to X25519; cofactor DH is undefined here.
+        if is_cofactor_dh(kea_oid) {
+            return Err(SmimeError::UnsupportedKeyEncryptionAlg { alg: format!("cofactor DH not defined for X25519 ({})", kea_oid) });
+        }
+        // RFC 8418 §3.2: the originatorKey algorithm MUST contain id-X25519
+        if originator_key.algorithm.oid() != &oid::X25519_OID {
+            return Err(SmimeError::DecryptionFailed {
+                err: format!("originatorKey algorithm {} is not id-X25519", originator_key.algorithm.oid()),
+            });
+        }
         let sk_bytes: [u8; 32] = extract_x25519_private_key(pki.private_key.into())?;
         let pk_bytes: [u8; 32] = ephemeral_pubkey_bytes.try_into().map_err(|_| SmimeError::DecryptionFailed {
             err: format!("X25519 public key must be 32 bytes, got {}", ephemeral_pubkey_bytes.len()),
@@ -348,6 +362,13 @@ fn decrypt_kari_cek(
         // NIST curves (RFC 5753)
         let curve_oid =
             pki.algorithm.parameters_oid().map_err(|e| SmimeError::PrivateKeyParseFailed { err: format!("EC curve OID: {}", e) })?;
+
+        // RFC 5753 §3.1.3: the originatorKey algorithm MUST contain id-ecPublicKey
+        if originator_key.algorithm.oid() != &oid::EC_OID {
+            return Err(SmimeError::DecryptionFailed {
+                err: format!("originatorKey algorithm {} is not id-ecPublicKey", originator_key.algorithm.oid()),
+            });
+        }
 
         // Reject cofactor DH OIDs for any curve where we cannot guarantee h=1.
         if is_cofactor_dh(kea_oid) {
@@ -407,7 +428,7 @@ fn decrypt_kari_cek(
             }
         }
     }
-    Err(last_err.unwrap_or_else(|| SmimeError::DecryptionFailed { err: "KARI has no RecipientEncryptedKeys".into() }))
+    Err(last_err.unwrap_or_else(|| SmimeError::DecryptionFailed { err: "KARI has no matching RecipientEncryptedKey".into() }))
 }
 
 /// Extract raw 32-byte X25519 private key from PKCS#8 PrivateKeyInfo.
@@ -447,6 +468,10 @@ pub fn decrypt_pwri_cek(
         .ok_or_else(|| SmimeError::UnsupportedKeyEncryptionAlg { alg: "PWRI without keyDerivationAlgorithm".into() })?;
     let kek = match &kda.params {
         AlgorithmParameters::Pbkdf2(params) => {
+            // RFC 8018 paragraph 5.2: iterationCount is INTEGER (1..MAX)
+            if params.iteration_count == 0 {
+                return Err(SmimeError::DecryptionFailed { err: "PBKDF2 iteration count 0 is invalid".into() });
+            }
             if params.iteration_count < 100_000 {
                 warnings.push(SmimeError::Pbkdf2LowIterationCount { iterations: params.iteration_count });
             }
@@ -454,6 +479,14 @@ pub fn decrypt_pwri_cek(
                 return Err(SmimeError::DecryptionFailed {
                     err: format!("PBKDF2 iteration count {} is unreasonably high", params.iteration_count),
                 });
+            }
+            // An explicit keyLength must agree with the KEK size implied by the PWRI cipher.
+            if let Some(key_length) = params.key_length {
+                if key_length != kek_len as u64 {
+                    return Err(SmimeError::DecryptionFailed {
+                        err: format!("PBKDF2 keyLength {} does not match KEK cipher key length {}", key_length, kek_len),
+                    });
+                }
             }
             let rounds = u32::try_from(params.iteration_count).map_err(|_| SmimeError::DecryptionFailed {
                 err: format!("PBKDF2 iteration count {} exceeds u32", params.iteration_count),

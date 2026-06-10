@@ -320,6 +320,16 @@ fn test_decrypt_x25519_hkdf512() {
 }
 
 #[test]
+fn test_decrypt_x25519_ukm() {
+    x25519_decrypt_test("tests/general/test_encrypted_x25519_ukm.eml", "stdDH-sha256kdf");
+}
+
+#[test]
+fn test_decrypt_x25519_hkdf256_ukm() {
+    x25519_decrypt_test("tests/general/test_encrypted_x25519_hkdf256_ukm.eml", "hkdf-sha256");
+}
+
+#[test]
 fn test_decrypt_x25519_x963_sha384() {
     x25519_decrypt_test("tests/general/test_encrypted_x25519_x963_sha384.eml", "stdDH-sha384kdf");
 }
@@ -341,6 +351,51 @@ fn test_decrypt_x25519_with_rsa_key() {
     );
     let has_key_error = result.failures.iter().any(|f| matches!(f, SmimeError::PrivateKeyParseFailed { .. }));
     assert!(has_key_error, "Expected PrivateKeyParseFailed when using RSA key for X25519, got: {:?}", result.failures);
+}
+
+#[test]
+fn test_decrypt_x25519_wrong_originator_algorithm() {
+    use base64::prelude::*;
+    let eml = fs::read_to_string("tests/general/test_encrypted_x25519.eml").expect("read");
+    let (headers, body) = eml.split_once("\r\n\r\n").expect("eml body");
+    let der = BASE64_STANDARD.decode(body.replace(['\r', '\n'], "")).expect("base64");
+    // Swap the originatorKey algorithm OID from id-X25519 (1.3.101.110) to id-X448 (1.3.101.111)
+    let x25519_oid_der = [0x06, 0x03, 0x2b, 0x65, 0x6e];
+    let positions: Vec<usize> =
+        der.windows(x25519_oid_der.len()).enumerate().filter(|(_, w)| *w == x25519_oid_der).map(|(i, _)| i).collect();
+    assert_eq!(positions.len(), 1, "expected exactly one id-X25519 OID in fixture");
+    let mut tampered = der;
+    tampered[positions[0] + 4] = 0x6f;
+    let tampered_eml = format!("{}\r\n\r\n{}", headers, BASE64_STANDARD.encode(&tampered));
+
+    let key_der = pem::parse(fs::read("tests/keys/test_x25519.key").expect("read")).expect("pem").into_contents();
+    let cert_der = load_cert_der("tests/keys/test_x25519.key");
+    let result = smime::decrypt_and_verify_smime_from_eml_detailed(
+        tampered_eml,
+        vec![TrustStore::Debug].into(),
+        &smime::decrypt::DecryptionKeys { private_key_der: &key_der, recipient_cert_der: &cert_der, ..Default::default() },
+    );
+    let has_originator_error =
+        result.failures.iter().any(|f| matches!(f, SmimeError::DecryptionFailed { err } if err.contains("is not id-X25519")));
+    assert!(has_originator_error, "Expected originatorKey algorithm mismatch error, got: {:?}", result.failures);
+}
+
+#[test]
+fn test_decrypt_x448_key_rejected() {
+    let eml = fs::read_to_string("tests/general/test_encrypted_x25519.eml").expect("read");
+    // Minimal PKCS#8 PrivateKeyInfo with the X448 OID (1.3.101.111); the key bytes are
+    // never used because the algorithm is rejected before any key agreement.
+    let mut x448_key = vec![0x30, 0x46, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6f, 0x04, 0x3a, 0x04, 0x38];
+    x448_key.extend_from_slice(&[0u8; 56]);
+    let cert_der = load_cert_der("tests/keys/test_x25519.key");
+    let result = smime::decrypt_and_verify_smime_from_eml_detailed(
+        eml,
+        vec![TrustStore::Debug].into(),
+        &smime::decrypt::DecryptionKeys { private_key_der: &x448_key, recipient_cert_der: &cert_der, ..Default::default() },
+    );
+    let has_x448_error =
+        result.failures.iter().any(|f| matches!(f, SmimeError::UnsupportedKeyEncryptionAlg { alg } if alg.contains("X448")));
+    assert!(has_x448_error, "Expected explicit X448 rejection, got: {:?}", result.failures);
 }
 
 #[cfg(feature = "decrypt-ccm")]

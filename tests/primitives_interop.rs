@@ -157,6 +157,75 @@ fn pkcs12_null_password_mac_flavor() {
 }
 
 #[test]
+fn pkcs12_unsupported_version() {
+    let leaf_der = extract_leaf_certificate_from_p12(&std::fs::read("tests/nested/certificate.p12").unwrap(), "1234567890").unwrap();
+    let v3 = cert_only_pfx(&[&leaf_der]);
+    let pfx = asn1::parse_single::<Pfx>(&v3).unwrap();
+    let p12 = asn1::write_single(&Pfx { version: 2, auth_safe: pfx.auth_safe, mac_data: None }).unwrap();
+    let err = extract_leaf_certificate_from_p12(&p12, "").expect_err("PFX version 2 accepted").into_message();
+    assert!(err.contains("Unsupported PFX version: 2"), "unexpected error: {}", err);
+}
+
+/// Build a MAC-less PKCS#12 whose AuthenticatedSafe holds a PBES2 EncryptedData
+/// (AES-128-CBC) with the given PBKDF2 parameters. The ciphertext is filler:
+/// parameter validation must fail before decryption is attempted.
+fn pbes2_pfx(iteration_count: u64, key_length: Option<u64>) -> Vec<u8> {
+    use smime::cryptography_x509::common::{AlgorithmIdentifier, AlgorithmParameters, PBES2Params, PBKDF2Params};
+    use smime::cryptography_x509::pkcs7::{EncryptedContentInfo, EncryptedData, PKCS7_DATA_OID};
+
+    let salt = [7u8; 8];
+    let ciphertext = [0u8; 16];
+    let prf = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::HmacWithSha256(Some(())) };
+    let kdf = AlgorithmIdentifier {
+        oid: asn1::DefinedByMarker::marker(),
+        params: AlgorithmParameters::Pbkdf2(PBKDF2Params { salt: &salt, iteration_count, key_length, prf: Box::new(prf) }),
+    };
+    let scheme = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Aes128Cbc([0u8; 16]) };
+    let encrypted = EncryptedData {
+        version: 0,
+        encrypted_content_info: EncryptedContentInfo {
+            content_type: PKCS7_DATA_OID.clone(),
+            content_encryption_algorithm: AlgorithmIdentifier {
+                oid: asn1::DefinedByMarker::marker(),
+                params: AlgorithmParameters::Pbes2(PBES2Params { key_derivation_func: Box::new(kdf), encryption_scheme: Box::new(scheme) }),
+            },
+            encrypted_content: Some(&ciphertext),
+        },
+        unprotected_attrs: None,
+    };
+    let auth_safe = asn1::write_single(&asn1::SequenceOfWriter::new([ContentInfo {
+        content_type: asn1::DefinedByMarker::marker(),
+        content: Content::EncryptedData(asn1::Explicit::new(encrypted)),
+    }]))
+    .unwrap();
+    asn1::write_single(&Pfx {
+        version: 3,
+        auth_safe: ContentInfo {
+            content_type: asn1::DefinedByMarker::marker(),
+            content: Content::Data(Some(asn1::Explicit::new(&auth_safe))),
+        },
+        mac_data: None,
+    })
+    .unwrap()
+}
+
+#[test]
+fn pkcs12_pbes2_zero_iteration_count() {
+    let err = smime::pkcs12_utils::extract_private_key_from_p12(&pbes2_pfx(0, None), "zone.eu")
+        .expect_err("PBKDF2 iteration count 0 accepted")
+        .into_message();
+    assert!(err.contains("iteration count 0"), "unexpected error: {}", err);
+}
+
+#[test]
+fn pkcs12_pbes2_key_length_mismatch() {
+    let err = smime::pkcs12_utils::extract_private_key_from_p12(&pbes2_pfx(2048, Some(32)), "zone.eu")
+        .expect_err("PBKDF2 keyLength mismatch accepted")
+        .into_message();
+    assert!(err.contains("keyLength 32 does not match cipher key length 16"), "unexpected error: {}", err);
+}
+
+#[test]
 fn pkcs12_cert_only_unprotected_bundle() {
     let leaf_der = extract_leaf_certificate_from_p12(&std::fs::read("tests/nested/certificate.p12").unwrap(), "1234567890").unwrap();
     let ca_der = pem::parse(std::fs::read("tests/keys/test_rsa.pem").unwrap()).unwrap().into_contents();

@@ -24,33 +24,29 @@ pub fn verify_message_digest(
     let computed_digest =
         compute_hash(&hash_type, content).map_err(|_| SmimeError::DisallowedDigestAlg { alg: format!("{:?}", hash_type), idx: 0 })?;
 
-    for attr in attrs.unwrap_read().clone() {
-        let mut values: Vec<_> = match attr.type_id {
-            MESSAGE_DIGEST_OID => attr.values.unwrap_read().clone().collect(),
-            _ => continue,
-        };
-        let expected_digest = match values.as_mut_slice() {
-            [single] => asn1::parse_single::<&[u8]>(single.full_data())
-                .map_err(|e| SmimeError::DigestVerify { err: format!("malformed message-digest value: {}", e) })?,
-            _ => {
-                return Err(SmimeError::DigestVerify {
-                    err: format!("message-digest attribute must have exactly one value, found {}", values.len()),
-                });
-            }
-        };
-        return match expected_digest.ct_eq(computed_digest.as_slice()).into() {
-            true => Ok(()),
-            false => Err(SmimeError::DigestVerify {
-                err: format!(
-                    "digests not equivalent: expected {}, computed {}",
-                    hex::encode(expected_digest),
-                    hex::encode(&computed_digest)
-                ),
-            }),
-        };
+    let mut digest_attrs = attrs.unwrap_read().clone().filter(|attr| attr.type_id == MESSAGE_DIGEST_OID);
+    let attr = digest_attrs.next().ok_or(SmimeError::DigestVerify { err: "message-digest attribute missing".to_string() })?;
+    // RFC 5652 §11.2: a SignerInfo MUST NOT include multiple instances of the message-digest attribute
+    if digest_attrs.next().is_some() {
+        return Err(SmimeError::DigestVerify { err: "multiple message-digest attribute instances".to_string() });
     }
 
-    Err(SmimeError::DigestVerify { err: "message-digest attribute missing".to_string() })
+    let mut values: Vec<_> = attr.values.unwrap_read().clone().collect();
+    let expected_digest = match values.as_mut_slice() {
+        [single] => asn1::parse_single::<&[u8]>(single.full_data())
+            .map_err(|e| SmimeError::DigestVerify { err: format!("malformed message-digest value: {}", e) })?,
+        _ => {
+            return Err(SmimeError::DigestVerify {
+                err: format!("message-digest attribute must have exactly one value, found {}", values.len()),
+            });
+        }
+    };
+    match expected_digest.ct_eq(computed_digest.as_slice()).into() {
+        true => Ok(()),
+        false => Err(SmimeError::DigestVerify {
+            err: format!("digests not equivalent: expected {}, computed {}", hex::encode(expected_digest), hex::encode(&computed_digest)),
+        }),
+    }
 }
 
 fn extract_subject_public_key(spki_der: &[u8]) -> Result<Vec<u8>, CryptographyError> {

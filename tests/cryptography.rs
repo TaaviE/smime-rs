@@ -229,6 +229,25 @@ fn test_no_message_digest_attr() {
 }
 
 #[test]
+fn test_duplicate_signed_attrs() {
+    let eml = fs::read_to_string("tests/general/duplicate-signed-attrs.eml").expect("read");
+    let result = verify_smime_from_eml_detailed(eml, vec![TrustStore::Debug].into());
+    // The signature covers both duplicates and verifies, but the RFC 5652 §11.1/§11.2
+    // cardinality violations must fail the signer
+    assert!(result.signers.is_empty());
+    assert!(
+        result.failures.iter().any(|f| matches!(f, SmimeError::AttributeCardinality { attr, .. } if attr == "content-type")),
+        "expected content-type cardinality failure, got: {:?}",
+        result.failures
+    );
+    assert!(
+        result.failures.iter().any(|f| matches!(f, SmimeError::DigestVerify { err } if err.contains("multiple message-digest"))),
+        "expected multiple message-digest failure, got: {:?}",
+        result.failures
+    );
+}
+
+#[test]
 fn test_ess_signing_cert_unsupported() {
     let eml = fs::read_to_string("tests/general/ess-signing-cert.eml").expect("read");
     let result = verify_smime_from_eml_detailed(eml, vec![TrustStore::Debug].into());
@@ -238,6 +257,38 @@ fn test_ess_signing_cert_unsupported() {
     assert!(
         result.failures.iter().any(|f| matches!(f, SmimeError::Raw(s) if s.contains("ESS signingCertificate"))),
         "expected unsupported ESS attribute failure, got: {:?}",
+        result.failures
+    );
+}
+
+#[test]
+fn test_email_address_dn() {
+    let eml = fs::read_to_string("tests/general/email-address-dn.eml").expect("read");
+    let trust = smime::TrustConfig { stores: vec![], ca_file_pem: Some(include_bytes!("general/email-address-dn-cert.pem").to_vec()) };
+    let result = verify_smime_from_eml_detailed(eml, trust);
+    assert_eq!(result.signers.len(), 1);
+    let checks = &result.signers[0].validation_details.checks;
+    assert!(checks.signature_matches_signed_data);
+    // RFC 8550 §3: the PKCS#9 emailAddress DN attribute is this cert's only email (no SAN)
+    assert_eq!(checks.certificate_emails, ["anu@naide.ee"]);
+    assert_eq!(checks.certificate_names, ["Anu Allkirjastaja"]);
+    // The inner From has no display name, so sender resolution replacing the outer
+    // identity (from_comment cleared) proves the match used the DN-extracted address.
+    assert_eq!(result.from_address.as_deref(), Some("anu@naide.ee"));
+    assert_eq!(result.from_comment, None);
+}
+
+#[test]
+fn test_rsa_params_absent() {
+    let eml = fs::read_to_string("tests/general/rsa-params-absent.eml").expect("read");
+    let result = verify_smime_from_eml_detailed(eml, vec![TrustStore::Debug].into());
+    // RFC 5754 §3.2: sha256WithRSAEncryption with absent parameters MUST be accepted
+    assert_eq!(result.signers.len(), 1, "params-absent signer rejected: {:?}", result.failures);
+    assert!(result.signers[0].validation_details.checks.signature_matches_signed_data);
+    assert!(result.signers[0].validation_details.checks.message_digest_matches_content);
+    assert!(
+        !result.failures.iter().any(|f| matches!(f, SmimeError::DisallowedSignatureAlg { .. })),
+        "params-absent sha256WithRSAEncryption must not be disallowed: {:?}",
         result.failures
     );
 }

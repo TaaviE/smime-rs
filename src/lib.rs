@@ -24,7 +24,7 @@ pub mod errors;
 pub mod pkcs12_utils;
 
 use crate::cryptography_x509::certificate::Certificate;
-use crate::cryptography_x509::common::{Asn1Read, Time};
+use crate::cryptography_x509::common::{AlgorithmParameters, Asn1Read, Time};
 use crate::cryptography_x509::extensions::{PolicyInformation, Qualifier, SubjectAlternativeName};
 use crate::cryptography_x509::name::GeneralName;
 use crate::cryptography_x509::oid::*;
@@ -108,24 +108,24 @@ pub fn verify_smime_from_eml(eml_text: js_sys::JsString) -> JsSmimeValidationRes
 }
 
 /// Encrypt to recipients using AES-256-GCM (CMS AuthEnvelopedData).
-/// Returns DER ContentInfo bytes, or `undefined` if no recipient cert had a usable key.
+/// Throws if `certs_pem` is empty or any recipient cert has an unsupported key.
 #[cfg(feature = "encrypt")]
 #[wasm_bindgen]
-pub fn encrypt_gcm(certs_pem: Vec<String>, plaintext: &[u8], pkcs1v15: bool) -> Result<Option<Vec<u8>>, JsError> {
+pub fn encrypt_gcm(certs_pem: Vec<String>, plaintext: &[u8], pkcs1v15: bool) -> Result<Vec<u8>, JsError> {
     set_panic_hook();
     encrypt::encrypt(&certs_pem, plaintext, encrypt::ContentCipher::Aes256Gcm, pkcs1v15).map_err(|e| JsError::new(&e.localize_en_uk()))
 }
 
 /// Encrypt to recipients using AES-256-CBC (CMS EnvelopedData).
-/// Returns DER ContentInfo bytes, or `undefined` if no recipient cert had a usable key.
+/// Throws if `certs_pem` is empty or any recipient cert has an unsupported key.
 #[cfg(feature = "encrypt")]
 #[wasm_bindgen]
-pub fn encrypt_cbc(certs_pem: Vec<String>, plaintext: &[u8], pkcs1v15: bool) -> Result<Option<Vec<u8>>, JsError> {
+pub fn encrypt_cbc(certs_pem: Vec<String>, plaintext: &[u8], pkcs1v15: bool) -> Result<Vec<u8>, JsError> {
     set_panic_hook();
     encrypt::encrypt(&certs_pem, plaintext, encrypt::ContentCipher::Aes256Cbc, pkcs1v15).map_err(|e| JsError::new(&e.localize_en_uk()))
 }
 
-/// Validate a recipient certificate's public key (RSA 2048-4096, or EC P-256/384/521).
+/// Validate a recipient certificate's public key (RSA 2048-4096, EC P-256/384/521, or X25519).
 /// Throws if the key is unsupported.
 #[cfg(feature = "encrypt")]
 #[wasm_bindgen]
@@ -295,11 +295,25 @@ fn extract_cert_info(cert: &Certificate<'_>) -> (Vec<String>, Vec<String>, Vec<S
                     };
 
                     if let Some(cn) = cn_value {
-                        if cn.contains('@') {
-                            certificate_emails.push(email_domain_to_a_label(&cn));
-                        } else {
-                            certificate_names.push(cn);
+                        certificate_names.push(cn);
+                    }
+                }
+                EMAIL_ADDRESS_OID => {
+                    // RFC 8550 §3: receiving agents MUST recognize the PKCS#9
+                    // emailAddress attribute in the subject DN. RFC 5280 §A.1
+                    // defines it as IA5String.
+                    match &attr.value {
+                        cryptography_x509::common::AttributeValue::AnyString(tlv) if tlv.tag() == asn1::Tag::primitive(0x16) => {
+                            match str::from_utf8(tlv.data()) {
+                                Ok(email) => certificate_emails.push(email.to_string()),
+                                Err(e) => other_notes.push(SmimeError::Raw(format!(
+                                    "subject emailAddress attribute is not valid IA5String: {e} (hex: {})",
+                                    hex::encode(tlv.data())
+                                ))),
+                            }
                         }
+                        other => other_notes
+                            .push(SmimeError::Raw(format!("subject emailAddress attribute must be IA5String, got tag {:?}", other.tag()))),
                     }
                 }
                 _ => {}
@@ -685,7 +699,17 @@ fn check_algorithms(signer: &SignerInfo<'_>, idx: usize) -> Result<Vec<SmimeErro
         return Ok(warnings);
     }
 
-    if !SMIME_PERMITTED_SIGNATURE_ALGORITHMS.contains(&signer.digest_encryption_algorithm) {
+    // RFC 5754 §3.2: sha*WithRSAEncryption parameters SHOULD be NULL, but
+    // "Implementations MUST accept the parameters being absent as well"
+    let mut signature_algorithm = signer.digest_encryption_algorithm.clone();
+    signature_algorithm.params = match signature_algorithm.params {
+        AlgorithmParameters::RsaWithSha256(None) => AlgorithmParameters::RsaWithSha256(Some(())),
+        AlgorithmParameters::RsaWithSha384(None) => AlgorithmParameters::RsaWithSha384(Some(())),
+        AlgorithmParameters::RsaWithSha512(None) => AlgorithmParameters::RsaWithSha512(Some(())),
+        params => params,
+    };
+
+    if !SMIME_PERMITTED_SIGNATURE_ALGORITHMS.contains(&signature_algorithm) {
         return Err(SmimeError::DisallowedSignatureAlg { alg: format!("{:?}", signer.digest_encryption_algorithm.oid()), idx });
     }
 
@@ -928,7 +952,7 @@ fn prepare_signer<'a>(
     }
 
     let mut signing_time = None;
-    let mut has_content_type_attr = false;
+    let mut content_type_count = 0u32;
     let mut smime_capabilities_count = 0u32;
     let mut signing_time_count = 0u32;
 
@@ -936,7 +960,7 @@ fn prepare_signer<'a>(
         for attr in attrs.unwrap_read().clone() {
             match attr.type_id {
                 CONTENT_TYPE_OID => {
-                    has_content_type_attr = true;
+                    content_type_count += 1;
                     let values = attr.values.unwrap_read().clone().collect::<Vec<_>>();
                     // RFC 5652 §11.1: attrValues MUST contain exactly one ContentType (an OID)
                     match values.as_slice() {
@@ -991,8 +1015,12 @@ fn prepare_signer<'a>(
     }
 
     // RFC 5652 §11.1: content-type attribute MUST be present when signed attributes exist
-    if signer.authenticated_attributes.is_some() && !has_content_type_attr {
+    if signer.authenticated_attributes.is_some() && content_type_count == 0 {
         result.failures.push(SmimeError::MissingContentTypeAttr { idx });
+    }
+    // RFC 5652 §11.1: at most one content-type attribute
+    if content_type_count > 1 {
+        result.failures.push(SmimeError::AttributeCardinality { attr: "content-type".into(), idx });
     }
     // RFC 8551 §2.5.2: SMIMECapabilities cardinality violation
     if smime_capabilities_count > 1 {

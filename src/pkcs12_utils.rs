@@ -74,6 +74,11 @@ enum CertType<'a> {
 fn open_safe_contents(data: &[u8], password: &str) -> Result<Vec<Vec<u8>>, P12Error> {
     let pfx: Pfx = asn1::parse_single(data).map_err(|e| P12Error::Other(format!("PFX parse: {}", e)))?;
 
+    // RFC 7292 paragraph 4: version shall be 3
+    if pfx.version != 3 {
+        return Err(P12Error::Other(format!("Unsupported PFX version: {}", pfx.version)));
+    }
+
     // PFX.authSafe is a ContentInfo of type id-data wrapping the AuthenticatedSafe DER.
     let auth_safe_bytes: &[u8] = match &pfx.auth_safe.content {
         Content::Data(Some(d)) => d.as_inner(),
@@ -188,11 +193,22 @@ fn pbes2_decrypt(alg: &AlgorithmIdentifier, password: &str, ciphertext: &[u8]) -
     if pbkdf2.salt.len() < 8 {
         return Err(P12Error::Other(format!("PBKDF2 salt length {} is below minimum of 8 bytes", pbkdf2.salt.len())));
     }
+    // RFC 8018 paragraph 5.2: iterationCount is INTEGER (1..MAX)
+    if pbkdf2.iteration_count == 0 {
+        return Err(P12Error::Other("PBKDF2 iteration count 0 is invalid".to_owned()));
+    }
     if pbkdf2.iteration_count > 100_000_000 {
         return Err(P12Error::Other(format!("PBKDF2 iteration count {} is unreasonably high", pbkdf2.iteration_count)));
     }
     if pbkdf2.iteration_count < 100_000 {
         eprintln!("Warning: PBKDF2 iteration count {} is below recommended minimum of 100000", pbkdf2.iteration_count);
+    }
+    // RFC 8018 paragraph 6.2: PBES2 takes the key length from the encryption scheme;
+    // an explicit keyLength must agree with it.
+    if let Some(key_length) = pbkdf2.key_length {
+        if key_length != key_len as u64 {
+            return Err(P12Error::Other(format!("PBKDF2 keyLength {} does not match cipher key length {}", key_length, key_len)));
+        }
     }
 
     // RFC 8018 paragraph A.2: dispatch on the PRF (default is hmacWithSHA1)

@@ -75,6 +75,11 @@ enum SignCommands {
         #[arg(long, default_value = "tests/general/no-message-digest-attr.eml")]
         output: PathBuf,
     },
+    /// Signed message with duplicate content-type and message-digest attributes
+    DuplicateSignedAttrs {
+        #[arg(long, default_value = "tests/general/duplicate-signed-attrs.eml")]
+        output: PathBuf,
+    },
     /// Signed message with no authenticated attributes
     NoAuthAttrs {
         #[arg(long, default_value = "tests/general/no-auth-attrs.eml")]
@@ -83,6 +88,16 @@ enum SignCommands {
     /// Signed message with ESS signingCertificate + signingCertificateV2 attributes
     EssSigningCert {
         #[arg(long, default_value = "tests/general/ess-signing-cert.eml")]
+        output: PathBuf,
+    },
+    /// Signer cert with PKCS#9 emailAddress in the subject DN, no SAN
+    EmailAddressDn {
+        #[arg(long, default_value = "tests/general/email-address-dn.eml")]
+        output: PathBuf,
+    },
+    /// sha256WithRSAEncryption signatureAlgorithm with absent parameters (RFC 5754 §3.2)
+    RsaParamsAbsent {
+        #[arg(long, default_value = "tests/general/rsa-params-absent.eml")]
         output: PathBuf,
     },
 }
@@ -107,15 +122,22 @@ fn utf8_attr_value(s: &str) -> AttributeValue<'_> {
     AttributeValue::AnyString(RawTlv::new(asn1::Tag::primitive(0x0c), s.as_bytes()))
 }
 
-fn build_name_der(cn: &str) -> Vec<u8> {
+fn build_name_der(cn: &str, email: Option<&str>) -> Vec<u8> {
     let org_oid = asn1::oid!(2, 5, 4, 10);
     let org_attr = AttributeTypeValue { type_id: org_oid, value: utf8_attr_value("Zone Media OÜ") };
     let cn_attr = AttributeTypeValue { type_id: oid::COMMON_NAME_OID, value: utf8_attr_value(cn) };
 
-    let name_val: name::Name<'_> = Asn1ReadableOrWritable::new_write(asn1::SequenceOfWriter::new(vec![
-        asn1::SetOfWriter::new(vec![org_attr]),
-        asn1::SetOfWriter::new(vec![cn_attr]),
-    ]));
+    let mut rdns = vec![asn1::SetOfWriter::new(vec![org_attr]), asn1::SetOfWriter::new(vec![cn_attr])];
+    if let Some(email) = email {
+        // PKCS#9 emailAddress, IA5String per RFC 5280 §A.1
+        let email_attr = AttributeTypeValue {
+            type_id: oid::EMAIL_ADDRESS_OID,
+            value: AttributeValue::AnyString(RawTlv::new(asn1::Tag::primitive(0x16), email.as_bytes())),
+        };
+        rdns.push(asn1::SetOfWriter::new(vec![email_attr]));
+    }
+
+    let name_val: name::Name<'_> = Asn1ReadableOrWritable::new_write(asn1::SequenceOfWriter::new(rdns));
 
     asn1::write_single(&name_val).unwrap()
 }
@@ -132,12 +154,17 @@ fn build_certificate_der(
     spki_alg: &AlgorithmIdentifier<'_>,
     pub_key_bytes: &[u8],
     cn: &str,
+    email: Option<&str>,
+    extensions: &[(asn1::ObjectIdentifier, bool, Vec<u8>)],
     sign: &dyn Fn(&[u8]) -> Vec<u8>,
 ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let mut serial_bytes = random_bytes::<16>().to_vec();
     serial_bytes[0] &= 0x7F;
+    if serial_bytes[0] == 0 {
+        serial_bytes[0] = 1;
+    }
 
-    let name_der = build_name_der(cn);
+    let name_der = build_name_der(cn, email);
 
     let spki = SubjectPublicKeyInfo { algorithm: spki_alg.clone(), subject_public_key: asn1::BitString::new(pub_key_bytes, 0).unwrap() };
     let spki_der = asn1::write_single(&spki).unwrap();
@@ -147,6 +174,11 @@ fn build_certificate_der(
     let spki_with_tlv: WithTlv<'_, SubjectPublicKeyInfo<'_>> = asn1::parse_single(&spki_der).unwrap();
     let issuer: name::NameReadable<'_> = asn1::parse_single(&name_der).unwrap();
     let subject: name::NameReadable<'_> = asn1::parse_single(&name_der).unwrap();
+
+    let ext_objs: Vec<Extension<'_>> =
+        extensions.iter().map(|(oid, crit, val)| Extension { extn_id: oid.clone(), critical: *crit, extn_value: val.as_slice() }).collect();
+    let raw_extensions =
+        if ext_objs.is_empty() { None } else { Some(Asn1ReadableOrWritable::new_write(asn1::SequenceOfWriter::new(ext_objs))) };
 
     let tbs = TbsCertificate {
         version: 2,
@@ -158,7 +190,7 @@ fn build_certificate_der(
         spki: spki_with_tlv,
         issuer_unique_id: None,
         subject_unique_id: None,
-        raw_extensions: None,
+        raw_extensions,
     };
 
     let tbs_der = asn1::write_single(&tbs).unwrap();
@@ -393,6 +425,100 @@ fn generate_no_message_digest(output: &PathBuf) {
     write_fixture_eml(output, &cms_der, "Test No Message Digest", "signed-data");
 }
 
+fn generate_duplicate_signed_attrs(output: &PathBuf) {
+    use rsa::pkcs8::DecodePrivateKey;
+    use signature::SignatureEncoding;
+
+    let cert_der = load_cert_der_for_fixtures("tests/keys/test_rsa.pem");
+    let cert: smime::cryptography_x509::certificate::Certificate<'_> = asn1::parse_single(&cert_der).unwrap();
+    let issuer_der = asn1::write_single(&cert.tbs_cert.issuer).unwrap();
+    let serial_bytes = cert.tbs_cert.serial.as_bytes().to_vec();
+
+    let key_pem = fs::read_to_string("tests/keys/test_rsa.key").expect("read RSA key");
+    let rsa_sk = rsa::RsaPrivateKey::from_pkcs8_pem(&key_pem).expect("parse RSA key");
+
+    let content = b"Content-Type: text/plain\r\n\r\nDuplicate signed attributes\r\n";
+    let content_hash = <sha2::Sha256 as sha2::Digest>::digest(content);
+    let bogus_hash = [0xFFu8; 32];
+
+    let sig_alg = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::RsaWithSha256(Some(())) };
+    let digest_alg = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Sha256(Some(())) };
+
+    // RFC 5652 §11.1/§11.2 violation: two content-type and two message-digest instances.
+    // The second message-digest carries a different value, so a verifier that picks
+    // the other instance would disagree on validity.
+    let data_oid_der = asn1::write_single(&PKCS7_DATA_OID).unwrap();
+    let data_oid_tlv: asn1::Tlv<'_> = asn1::parse_single(&data_oid_der).unwrap();
+    let digest_octet_tag = <&[u8] as asn1::SimpleAsn1Readable>::TAG;
+    let attrs = vec![
+        csr::Attribute {
+            type_id: oid::CONTENT_TYPE_OID,
+            values: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new([RawTlv::new(data_oid_tlv.tag(), data_oid_tlv.data())])),
+        },
+        csr::Attribute {
+            type_id: oid::CONTENT_TYPE_OID,
+            values: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new([RawTlv::new(data_oid_tlv.tag(), data_oid_tlv.data())])),
+        },
+        csr::Attribute {
+            type_id: oid::MESSAGE_DIGEST_OID,
+            values: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new([RawTlv::new(digest_octet_tag, content_hash.as_slice())])),
+        },
+        csr::Attribute {
+            type_id: oid::MESSAGE_DIGEST_OID,
+            values: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new([RawTlv::new(digest_octet_tag, bogus_hash.as_slice())])),
+        },
+    ];
+    let attrs_set = asn1::SetOfWriter::new(attrs);
+    let attrs_set_der = asn1::write_single(&attrs_set).unwrap();
+
+    let signer = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(rsa_sk);
+    let attrs_signature = {
+        use signature::Signer;
+        signer.sign(&attrs_set_der).to_vec()
+    };
+
+    let parsed_attrs: asn1::SetOf<'_, csr::Attribute<'_>> = asn1::parse_single(&attrs_set_der).unwrap();
+    let parsed_cert: smime::cryptography_x509::certificate::Certificate<'_> = asn1::parse_single(&cert_der).unwrap();
+    let issuer_name: name::NameReadable<'_> = asn1::parse_single(&issuer_der).unwrap();
+
+    let signer_info = SignerInfo {
+        version: 1,
+        issuer_and_serial_number: SignerIdentifier::IssuerAndSerialNumber(IssuerAndSerialNumber {
+            issuer: Asn1ReadableOrWritable::new_read(issuer_name),
+            serial_number: asn1::BigInt::new(&serial_bytes).unwrap(),
+        }),
+        digest_algorithm: digest_alg.clone(),
+        authenticated_attributes: Some(Asn1ReadableOrWritable::new_read(parsed_attrs)),
+        digest_encryption_algorithm: sig_alg.clone(),
+        encrypted_digest: &attrs_signature,
+        unauthenticated_attributes: None,
+    };
+
+    let digest_algs = [digest_alg];
+    let signer_infos = [signer_info];
+
+    let signed_data = SignedData {
+        version: 1,
+        digest_algorithms: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(&digest_algs)),
+        content_info: ContentInfo {
+            content_type: asn1::DefinedByMarker::marker(),
+            content: Content::Data(Some(asn1::Explicit::new(content.as_slice()))),
+        },
+        certificates: Some(Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(vec![CertificateChoices::Certificate(parsed_cert)]))),
+        crls: None,
+        signer_infos: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(&signer_infos)),
+    };
+
+    let content_info = ContentInfo {
+        content_type: asn1::DefinedByMarker::marker(),
+        content: Content::SignedData(asn1::Explicit::new(Box::new(signed_data))),
+    };
+
+    let cms_der = asn1::write_single(&content_info).unwrap();
+    verify_signed_cms(&cms_der);
+    write_fixture_eml(output, &cms_der, "Test Duplicate Signed Attrs", "signed-data");
+}
+
 fn generate_no_auth_attrs(output: &PathBuf) {
     use rsa::pkcs8::DecodePrivateKey;
     use signature::SignatureEncoding;
@@ -456,6 +582,89 @@ fn generate_no_auth_attrs(output: &PathBuf) {
     let cms_der = asn1::write_single(&content_info).unwrap();
     verify_signed_cms(&cms_der);
     write_fixture_eml(output, &cms_der, "Test No Auth Attrs", "signed-data");
+}
+
+// RFC 5754 §3.2: SignerInfo signatureAlgorithm sha256WithRSAEncryption with absent
+// parameters instead of NULL; "Implementations MUST accept the parameters being absent".
+fn generate_rsa_params_absent(output: &PathBuf) {
+    use rsa::pkcs8::DecodePrivateKey;
+    use signature::SignatureEncoding;
+
+    let cert_der = load_cert_der_for_fixtures("tests/keys/test_rsa.pem");
+    let cert: smime::cryptography_x509::certificate::Certificate<'_> = asn1::parse_single(&cert_der).unwrap();
+    let issuer_der = asn1::write_single(&cert.tbs_cert.issuer).unwrap();
+    let serial_bytes = cert.tbs_cert.serial.as_bytes().to_vec();
+
+    let key_pem = fs::read_to_string("tests/keys/test_rsa.key").expect("read RSA key");
+    let rsa_sk = rsa::RsaPrivateKey::from_pkcs8_pem(&key_pem).expect("parse RSA key");
+
+    let content: &[u8] = b"Content-Type: text/plain\r\n\r\nRSA absent parameters\r\n";
+    let content_hash = <sha2::Sha256 as sha2::Digest>::digest(content);
+
+    let sig_alg = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::RsaWithSha256(None) };
+    let digest_alg = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Sha256(Some(())) };
+
+    let data_oid_der = asn1::write_single(&PKCS7_DATA_OID).unwrap();
+    let data_oid_tlv: asn1::Tlv<'_> = asn1::parse_single(&data_oid_der).unwrap();
+    let digest_octet_tag = <&[u8] as asn1::SimpleAsn1Readable>::TAG;
+    let attrs = vec![
+        csr::Attribute {
+            type_id: oid::CONTENT_TYPE_OID,
+            values: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new([RawTlv::new(data_oid_tlv.tag(), data_oid_tlv.data())])),
+        },
+        csr::Attribute {
+            type_id: oid::MESSAGE_DIGEST_OID,
+            values: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new([RawTlv::new(digest_octet_tag, content_hash.as_slice())])),
+        },
+    ];
+    let attrs_set_der = asn1::write_single(&asn1::SetOfWriter::new(attrs)).unwrap();
+
+    let signer = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(rsa_sk);
+    let attrs_signature = {
+        use signature::Signer;
+        signer.sign(&attrs_set_der).to_vec()
+    };
+
+    let parsed_attrs: asn1::SetOf<'_, csr::Attribute<'_>> = asn1::parse_single(&attrs_set_der).unwrap();
+    let parsed_cert: smime::cryptography_x509::certificate::Certificate<'_> = asn1::parse_single(&cert_der).unwrap();
+    let issuer_name: name::NameReadable<'_> = asn1::parse_single(&issuer_der).unwrap();
+
+    let signer_info = SignerInfo {
+        version: 1,
+        issuer_and_serial_number: SignerIdentifier::IssuerAndSerialNumber(IssuerAndSerialNumber {
+            issuer: Asn1ReadableOrWritable::new_read(issuer_name),
+            serial_number: asn1::BigInt::new(&serial_bytes).unwrap(),
+        }),
+        digest_algorithm: digest_alg.clone(),
+        authenticated_attributes: Some(Asn1ReadableOrWritable::new_read(parsed_attrs)),
+        digest_encryption_algorithm: sig_alg.clone(),
+        encrypted_digest: &attrs_signature,
+        unauthenticated_attributes: None,
+    };
+
+    let digest_algs = [digest_alg];
+    let signer_infos = [signer_info];
+
+    let signed_data = SignedData {
+        version: 1,
+        digest_algorithms: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(&digest_algs)),
+        content_info: ContentInfo {
+            content_type: asn1::DefinedByMarker::marker(),
+            content: Content::Data(Some(asn1::Explicit::new(content))),
+        },
+        certificates: Some(Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(vec![CertificateChoices::Certificate(parsed_cert)]))),
+        crls: None,
+        signer_infos: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(&signer_infos)),
+    };
+
+    let content_info = ContentInfo {
+        content_type: asn1::DefinedByMarker::marker(),
+        content: Content::SignedData(asn1::Explicit::new(Box::new(signed_data))),
+    };
+
+    let cms_der = asn1::write_single(&content_info).unwrap();
+    verify_signed_cms(&cms_der);
+    write_fixture_eml(output, &cms_der, "Test RSA Absent Parameters", "signed-data");
 }
 
 // RFC 5035: signingCertificate (SHA-1) and signingCertificateV2 (SHA-256, hashAlgorithm
@@ -571,6 +780,39 @@ fn generate_ess_signing_cert(output: &PathBuf) {
     write_fixture_eml(output, &cms_der, "Test ESS Signing Cert", "signed-data");
 }
 
+/// RFC 8550 §3: the email is carried only in the PKCS#9 emailAddress DN
+/// attribute (no SAN), which receiving agents MUST recognize.
+fn generate_email_address_dn(output: &PathBuf) {
+    use sha2::Digest;
+
+    let sign_fn = rsa_signer("tests/keys/test_rsa_sign.key");
+    let pub_key_bits = pubkey_bits_of("tests/keys/test_rsa_sign.pem");
+
+    let sig_alg = rsa_sha256_alg();
+    let spki_alg = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::RSA(Some(())) };
+
+    let (cert_der, serial_bytes, name_der) = build_certificate_der(
+        &sig_alg,
+        &spki_alg,
+        &pub_key_bits,
+        "Anu Allkirjastaja",
+        Some("anu@naide.ee"),
+        &[(oid::EXTENDED_KEY_USAGE_OID, false, ev_eku(&[oid::EKU_EMAIL_PROTECTION_OID]))],
+        &sign_fn,
+    );
+    write_pem_cert(std::path::Path::new("tests/general"), "email-address-dn-cert.pem", &cert_der);
+
+    // Inner From so sender resolution must match the DN-extracted address.
+    let content: &[u8] = b"From: <anu@naide.ee>\r\nContent-Type: text/plain\r\n\r\nPKCS#9 emailAddress in subject DN\r\n";
+    let content_hash = sha2::Sha256::digest(content).to_vec();
+
+    let digest_alg = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Sha256(Some(())) };
+
+    let cms_der = build_cms_der(&cert_der, &serial_bytes, &name_der, content, &digest_alg, &sig_alg, &content_hash, &sign_fn);
+    verify_signed_cms(&cms_der);
+    write_fixture_eml(output, &cms_der, "Test emailAddress DN", "signed-data");
+}
+
 fn generate_ed25519(output: &PathBuf) {
     use ed25519_dalek::Signer;
     use ed25519_dalek::pkcs8::DecodePrivateKey;
@@ -651,7 +893,7 @@ fn generate_ml_dsa_44_shake128(output: &PathBuf) {
     };
 
     let (cert_der, serial_bytes, name_der) =
-        build_certificate_der(&sig_alg, &spki_alg, keypair.verification_key.as_ref(), "Anu Allkirjastaja", &sign_fn);
+        build_certificate_der(&sig_alg, &spki_alg, keypair.verification_key.as_ref(), "Anu Allkirjastaja", None, &[], &sign_fn);
 
     let content = b"Hello from ML-DSA-44-SHAKE128!";
     let content_hash = libcrux_sha3::shake128::<32>(content).to_vec();
@@ -680,7 +922,7 @@ fn generate_ml_dsa_44_shake(output: &PathBuf) {
     };
 
     let (cert_der, serial_bytes, name_der) =
-        build_certificate_der(&sig_alg, &spki_alg, keypair.verification_key.as_ref(), "Anu Allkirjastaja", &sign_fn);
+        build_certificate_der(&sig_alg, &spki_alg, keypair.verification_key.as_ref(), "Anu Allkirjastaja", None, &[], &sign_fn);
 
     let content = b"Hello from ML-DSA-44-SHAKE!";
     let content_hash = libcrux_sha3::shake256::<64>(content).to_vec();
@@ -709,7 +951,7 @@ fn generate_ml_dsa_65_shake(output: &PathBuf) {
     };
 
     let (cert_der, serial_bytes, name_der) =
-        build_certificate_der(&sig_alg, &spki_alg, keypair.verification_key.as_ref(), "Anu Allkirjastaja", &sign_fn);
+        build_certificate_der(&sig_alg, &spki_alg, keypair.verification_key.as_ref(), "Anu Allkirjastaja", None, &[], &sign_fn);
 
     let content = b"Hello from ML-DSA-65!";
     let content_hash = libcrux_sha3::shake256::<64>(content).to_vec();
@@ -736,7 +978,7 @@ fn generate_ml_dsa_87_shake(output: &PathBuf) {
     };
 
     let (cert_der, serial_bytes, name_der) =
-        build_certificate_der(&sig_alg, &spki_alg, keypair.verification_key.as_ref(), "Anu Allkirjastaja", &sign_fn);
+        build_certificate_der(&sig_alg, &spki_alg, keypair.verification_key.as_ref(), "Anu Allkirjastaja", None, &[], &sign_fn);
 
     let content = b"Hello from ML-DSA-87!";
     let content_hash = libcrux_sha3::shake256::<64>(content).to_vec();
@@ -760,11 +1002,14 @@ fn gen_x25519_fixtures() {
     let eph_pk = x25519_dalek::PublicKey::from(&eph_sk);
     let shared_secret = eph_sk.diffie_hellman(&recipient_pk);
 
-    struct Variant {
+    struct Variant<'a> {
         name: &'static str,
         kea_oid: asn1::ObjectIdentifier,
         kek: Vec<u8>,
+        ukm: Option<&'a [u8]>,
     }
+
+    let ukm: [u8; 16] = hex::decode("a0a1a2a3a4a5a6a7a8a9aaabacadaeaf").unwrap().try_into().unwrap();
 
     let shared_info = EccCmsSharedInfo {
         key_info: AlgorithmIdentifier {
@@ -776,6 +1021,17 @@ fn gen_x25519_fixtures() {
     };
     let shared_info_der = asn1::write_single(&shared_info).unwrap();
 
+    // RFC 5753 §7.2: a present ukm goes into entityUInfo; RFC 8418 §2.2 also uses it as the HKDF salt.
+    let shared_info_ukm = EccCmsSharedInfo {
+        key_info: AlgorithmIdentifier {
+            oid: asn1::DefinedByMarker::marker(),
+            params: AlgorithmParameters::Other(oid::AES128_WRAP.clone(), None),
+        },
+        entity_u_info: Some(&ukm),
+        supp_pub_info: &0x00000080u32.to_be_bytes(),
+    };
+    let shared_info_ukm_der = asn1::write_single(&shared_info_ukm).unwrap();
+
     let z = shared_secret.as_bytes();
 
     let mut x963_sha256_kek = vec![0u8; 16];
@@ -784,6 +1040,8 @@ fn gen_x25519_fixtures() {
     ansi_x963_kdf::derive_key_into::<sha2::Sha384>(z, &shared_info_der, &mut x963_sha384_kek).unwrap();
     let mut x963_sha512_kek = vec![0u8; 16];
     ansi_x963_kdf::derive_key_into::<sha2::Sha512>(z, &shared_info_der, &mut x963_sha512_kek).unwrap();
+    let mut x963_sha256_ukm_kek = vec![0u8; 16];
+    ansi_x963_kdf::derive_key_into::<sha2::Sha256>(z, &shared_info_ukm_der, &mut x963_sha256_ukm_kek).unwrap();
 
     let mut hkdf256_kek = vec![0u8; 16];
     Hkdf::<sha2::Sha256>::new(Some(&[]), z).expand(&shared_info_der, &mut hkdf256_kek).unwrap();
@@ -791,14 +1049,18 @@ fn gen_x25519_fixtures() {
     Hkdf::<sha2::Sha384>::new(Some(&[]), z).expand(&shared_info_der, &mut hkdf384_kek).unwrap();
     let mut hkdf512_kek = vec![0u8; 16];
     Hkdf::<sha2::Sha512>::new(Some(&[]), z).expand(&shared_info_der, &mut hkdf512_kek).unwrap();
+    let mut hkdf256_ukm_kek = vec![0u8; 16];
+    Hkdf::<sha2::Sha256>::new(Some(&ukm), z).expand(&shared_info_ukm_der, &mut hkdf256_ukm_kek).unwrap();
 
     let variants = [
-        Variant { name: "x25519", kea_oid: oid::DH_STD_SHA256.clone(), kek: x963_sha256_kek },
-        Variant { name: "x25519_x963_sha384", kea_oid: oid::DH_STD_SHA384.clone(), kek: x963_sha384_kek },
-        Variant { name: "x25519_x963_sha512", kea_oid: oid::DH_STD_SHA512.clone(), kek: x963_sha512_kek },
-        Variant { name: "x25519_hkdf256", kea_oid: oid::DH_HKDF_SHA256.clone(), kek: hkdf256_kek },
-        Variant { name: "x25519_hkdf384", kea_oid: oid::DH_HKDF_SHA384.clone(), kek: hkdf384_kek },
-        Variant { name: "x25519_hkdf512", kea_oid: oid::DH_HKDF_SHA512.clone(), kek: hkdf512_kek },
+        Variant { name: "x25519", kea_oid: oid::DH_STD_SHA256.clone(), kek: x963_sha256_kek, ukm: None },
+        Variant { name: "x25519_x963_sha384", kea_oid: oid::DH_STD_SHA384.clone(), kek: x963_sha384_kek, ukm: None },
+        Variant { name: "x25519_x963_sha512", kea_oid: oid::DH_STD_SHA512.clone(), kek: x963_sha512_kek, ukm: None },
+        Variant { name: "x25519_hkdf256", kea_oid: oid::DH_HKDF_SHA256.clone(), kek: hkdf256_kek, ukm: None },
+        Variant { name: "x25519_hkdf384", kea_oid: oid::DH_HKDF_SHA384.clone(), kek: hkdf384_kek, ukm: None },
+        Variant { name: "x25519_hkdf512", kea_oid: oid::DH_HKDF_SHA512.clone(), kek: hkdf512_kek, ukm: None },
+        Variant { name: "x25519_ukm", kea_oid: oid::DH_STD_SHA256.clone(), kek: x963_sha256_ukm_kek, ukm: Some(&ukm) },
+        Variant { name: "x25519_hkdf256_ukm", kea_oid: oid::DH_HKDF_SHA256.clone(), kek: hkdf256_ukm_kek, ukm: Some(&ukm) },
     ];
 
     let cek: [u8; 16] = hex::decode("00112233445566778899aabbccddeeff").unwrap().try_into().unwrap();
@@ -813,7 +1075,48 @@ fn gen_x25519_fixtures() {
     })
     .unwrap();
 
-    let cert_der = pem::parse(fs::read("tests/keys/test_x25519.pem").expect("read cert")).expect("parse cert PEM").into_contents();
+    // Recipient certificate: X25519 SPKI for recipient_sk, SKI matching the RKeyId used in the
+    // fixtures below, dummy zero signature (nothing verifies it; recipients match on the SKI).
+    let ski: [u8; 20] =
+        [0xcd, 0x4b, 0xe3, 0x00, 0xeb, 0x86, 0x8e, 0xcb, 0x96, 0x45, 0xd7, 0x00, 0x45, 0xf6, 0x68, 0x04, 0x3d, 0x18, 0x25, 0xf7];
+    let cert_der = {
+        let name_der = build_name_der("X25519 Test", None);
+        let spki = SubjectPublicKeyInfo {
+            algorithm: AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::X25519 },
+            subject_public_key: asn1::BitString::new(recipient_pk.as_bytes(), 0).unwrap(),
+        };
+        let spki_der = asn1::write_single(&spki).unwrap();
+        let spki_with_tlv: WithTlv<'_, SubjectPublicKeyInfo<'_>> = asn1::parse_single(&spki_der).unwrap();
+        let issuer: name::NameReadable<'_> = asn1::parse_single(&name_der).unwrap();
+        let subject: name::NameReadable<'_> = asn1::parse_single(&name_der).unwrap();
+        let ski_ev = asn1::write_single(&ski.as_slice()).unwrap();
+        let exts = vec![Extension { extn_id: oid::SUBJECT_KEY_IDENTIFIER_OID, critical: false, extn_value: &ski_ev }];
+        let sig_alg = rsa_sha256_alg();
+        let tbs = TbsCertificate {
+            version: 2,
+            serial: asn1::BigInt::new(&[1]).unwrap(),
+            signature_alg: sig_alg.clone(),
+            issuer: Asn1ReadableOrWritable::new_read(issuer),
+            validity: validity_utc((2020, 1, 1), (2030, 12, 31)),
+            subject: Asn1ReadableOrWritable::new_read(subject),
+            spki: spki_with_tlv,
+            issuer_unique_id: None,
+            subject_unique_id: None,
+            raw_extensions: Some(Asn1ReadableOrWritable::new_write(asn1::SequenceOfWriter::new(exts))),
+        };
+        let tbs_der = asn1::write_single(&tbs).unwrap();
+        let tbs_tlv: asn1::Tlv<'_> = asn1::parse_single(&tbs_der).unwrap();
+        let sig_bs = asn1::OwnedBitString::new(vec![0u8; 64], 0).unwrap();
+        let cert_der = asn1::write_single(&asn1::SequenceWriter::new(&|w| -> asn1::WriteResult {
+            w.write_element(&tbs_tlv)?;
+            w.write_element(&sig_alg)?;
+            w.write_element(&sig_bs)?;
+            Ok(())
+        }))
+        .unwrap();
+        write_pem_cert(std::path::Path::new("tests/keys"), "test_x25519.pem", &cert_der);
+        cert_der
+    };
 
     for v in &variants {
         let originator_key = OriginatorPublicKey {
@@ -825,20 +1128,14 @@ fn gen_x25519_fixtures() {
         aes_kw::KwAes128::new_from_slice(&v.kek).unwrap().wrap_key(&cek, &mut wrapped_cek).unwrap();
 
         let rek = RecipientEncryptedKey {
-            rid: KeyAgreeRecipientIdentifier::RKeyId(RecipientKeyIdentifier {
-                subject_key_identifier: &[
-                    0xcd, 0x4b, 0xe3, 0x00, 0xeb, 0x86, 0x8e, 0xcb, 0x96, 0x45, 0xd7, 0x00, 0x45, 0xf6, 0x68, 0x04, 0x3d, 0x18, 0x25, 0xf7,
-                ],
-                date: None,
-                other: None,
-            }),
+            rid: KeyAgreeRecipientIdentifier::RKeyId(RecipientKeyIdentifier { subject_key_identifier: &ski, date: None, other: None }),
             encrypted_key: &wrapped_cek,
         };
         let reks = [rek];
         let kari = KeyAgreeRecipientInfo {
             version: 3,
             originator: OriginatorIdentifierOrKey::OriginatorKey(originator_key),
-            ukm: None,
+            ukm: v.ukm,
             key_encryption_algorithm: AlgorithmIdentifier {
                 oid: asn1::DefinedByMarker::marker(),
                 params: AlgorithmParameters::Other(v.kea_oid.clone(), Some(wrap_alg_tlv.clone())),
@@ -890,8 +1187,11 @@ fn run_all() {
     generate_ml_dsa_65_shake(&PathBuf::from("tests/pq/ml-dsa-65.eml"));
     generate_ml_dsa_87_shake(&PathBuf::from("tests/pq/ml-dsa-87.eml"));
     generate_no_message_digest(&PathBuf::from("tests/general/no-message-digest-attr.eml"));
+    generate_duplicate_signed_attrs(&PathBuf::from("tests/general/duplicate-signed-attrs.eml"));
     generate_no_auth_attrs(&PathBuf::from("tests/general/no-auth-attrs.eml"));
     generate_ess_signing_cert(&PathBuf::from("tests/general/ess-signing-cert.eml"));
+    generate_email_address_dn(&PathBuf::from("tests/general/email-address-dn.eml"));
+    generate_rsa_params_absent(&PathBuf::from("tests/general/rsa-params-absent.eml"));
     gen_openssl_fixtures();
     gen_additional_fixtures();
     gen_multi_recipient_fixtures();
@@ -908,8 +1208,11 @@ fn main() {
             SignCommands::MlDsa65Shake { output } => generate_ml_dsa_65_shake(output),
             SignCommands::MlDsa87Shake { output } => generate_ml_dsa_87_shake(output),
             SignCommands::NoMessageDigest { output } => generate_no_message_digest(output),
+            SignCommands::DuplicateSignedAttrs { output } => generate_duplicate_signed_attrs(output),
             SignCommands::NoAuthAttrs { output } => generate_no_auth_attrs(output),
             SignCommands::EssSigningCert { output } => generate_ess_signing_cert(output),
+            SignCommands::EmailAddressDn { output } => generate_email_address_dn(output),
+            SignCommands::RsaParamsAbsent { output } => generate_rsa_params_absent(output),
         },
         Commands::Encrypt { command } => match command {
             EncryptCommands::Openssl => gen_openssl_fixtures(),
@@ -1855,7 +2158,7 @@ fn build_cert(
         serial[0] = 1;
     }
 
-    let subject_name_der = build_name_der(subject_cn);
+    let subject_name_der = build_name_der(subject_cn, None);
     let sig_alg = rsa_sha256_alg();
 
     let spki_with_tlv: WithTlv<'_, SubjectPublicKeyInfo<'_>> = asn1::parse_single(spki_der).unwrap();
@@ -2148,7 +2451,7 @@ fn gen_ocsp_stapling_fixtures() {
     let leaf_pubkey_bits = pubkey_bits_of("tests/keys/test_rsa.pem");
 
     // Self-signed root CA, valid 2024-01-01 .. 2035-01-01.
-    let root_name_der = build_name_der("Test Stapling Root CA");
+    let root_name_der = build_name_der("Test Stapling Root CA", None);
     let (root_der, _root_serial, root_subject_der) = build_cert(
         &root_name_der,
         "Test Stapling Root CA",
@@ -2530,7 +2833,7 @@ fn gen_nested_fixtures() {
     let recipient_pem = fs::read_to_string("tests/keys/test_rsa.pem").unwrap();
 
     // Self-signed root CA, trust anchor for the tests via ca_file_pem.
-    let root_name_der = build_name_der("Test Nested Root CA");
+    let root_name_der = build_name_der("Test Nested Root CA", None);
     let (root_der, _root_serial, root_subject_der) = build_cert(
         &root_name_der,
         "Test Nested Root CA",
@@ -2552,9 +2855,7 @@ fn gen_nested_fixtures() {
 
     let sign = |content: &[u8]| build_stapled_cms(&leaf_der, &root_der, &[], &leaf_serial, &root_subject_der, &[], content, &leaf_sign);
     let encrypt = |plaintext: &[u8]| {
-        smime::encrypt::encrypt(&[recipient_pem.clone()], plaintext, smime::encrypt::ContentCipher::Aes256Cbc, true)
-            .expect("encrypt")
-            .expect("recipient")
+        smime::encrypt::encrypt(&[recipient_pem.clone()], plaintext, smime::encrypt::ContentCipher::Aes256Cbc, true).expect("encrypt")
     };
 
     // E(S(Data))
