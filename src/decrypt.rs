@@ -778,8 +778,6 @@ pub fn decrypt_auth_enveloped_data(
 fn decrypt_aes_gcm(key: &[u8], nonce: &[u8], aad: &[u8], ciphertext: &[u8], tag: &[u8], tag_len: usize) -> Result<Vec<u8>, SmimeError> {
     use aes_gcm::{KeyInit, aead::AeadInOut};
 
-    let nonce: &[u8; 12] =
-        nonce.try_into().map_err(|_| SmimeError::DecryptionFailed { err: format!("GCM nonce must be 12 bytes, got {}", nonce.len()) })?;
     if tag.len() != tag_len {
         return Err(SmimeError::DecryptionFailed { err: format!("GCM tag length {} does not match icvLen {}", tag.len(), tag_len) });
     }
@@ -790,26 +788,47 @@ fn decrypt_aes_gcm(key: &[u8], nonce: &[u8], aad: &[u8], ciphertext: &[u8], tag:
             alg: format!("AES-GCM ICVlen {} not valid per RFC 5084 (must be 12..16)", tag_len),
         });
     }
+    // RFC 5084 §3.2 permits any nonce length and RECOMMENDS 12 octets. Require at
+    // least the recommended 12; the nonce length is a type-level param like the tag
+    // length, so the dispatch is capped at 16 (longer does not occur in practice).
+    if !(12..=16).contains(&nonce.len()) {
+        return Err(SmimeError::UnsupportedContentEncryptionAlg {
+            alg: format!("AES-GCM nonce length {} not supported (must be 12..16)", nonce.len()),
+        });
+    }
 
     let mut buf = ciphertext.to_vec();
     macro_rules! gcm_decrypt {
-        ($aes:ty, $tag_ty:ty, $tag_len_val:literal) => {{
-            type C = aes_gcm::AesGcm<$aes, aes_gcm::aead::consts::U12, $tag_ty>;
+        ($aes:ty, $nonce_ty:ty, $nonce_len_val:literal, $tag_ty:ty, $tag_len_val:literal) => {{
+            type C = aes_gcm::AesGcm<$aes, $nonce_ty, $tag_ty>;
+            let n: &[u8; $nonce_len_val] = nonce.try_into().unwrap();
             let t: &[u8; $tag_len_val] = tag.try_into().unwrap();
             C::new_from_slice(key)
                 .map_err(|e| SmimeError::DecryptionFailed { err: format!("AES-GCM init: {}", e) })?
-                .decrypt_inout_detached(nonce.into(), aad, (&mut buf[..]).into(), t.into())
+                .decrypt_inout_detached(n.into(), aad, (&mut buf[..]).into(), t.into())
                 .map_err(|e| SmimeError::DecryptionFailed { err: format!("AES-GCM: {}", e) })?
         }};
+    }
+    macro_rules! gcm_nonce_dispatch {
+        ($aes:ty, $tag_ty:ty, $tag_len_val:literal) => {
+            match nonce.len() {
+                12 => gcm_decrypt!($aes, aes_gcm::aead::consts::U12, 12, $tag_ty, $tag_len_val),
+                13 => gcm_decrypt!($aes, aes_gcm::aead::consts::U13, 13, $tag_ty, $tag_len_val),
+                14 => gcm_decrypt!($aes, aes_gcm::aead::consts::U14, 14, $tag_ty, $tag_len_val),
+                15 => gcm_decrypt!($aes, aes_gcm::aead::consts::U15, 15, $tag_ty, $tag_len_val),
+                16 => gcm_decrypt!($aes, aes_gcm::aead::consts::U16, 16, $tag_ty, $tag_len_val),
+                _ => unreachable!(),
+            }
+        };
     }
     macro_rules! gcm_tag_dispatch {
         ($aes:ty) => {
             match tag_len {
-                12 => gcm_decrypt!($aes, aes_gcm::aead::consts::U12, 12),
-                13 => gcm_decrypt!($aes, aes_gcm::aead::consts::U13, 13),
-                14 => gcm_decrypt!($aes, aes_gcm::aead::consts::U14, 14),
-                15 => gcm_decrypt!($aes, aes_gcm::aead::consts::U15, 15),
-                16 => gcm_decrypt!($aes, aes_gcm::aead::consts::U16, 16),
+                12 => gcm_nonce_dispatch!($aes, aes_gcm::aead::consts::U12, 12),
+                13 => gcm_nonce_dispatch!($aes, aes_gcm::aead::consts::U13, 13),
+                14 => gcm_nonce_dispatch!($aes, aes_gcm::aead::consts::U14, 14),
+                15 => gcm_nonce_dispatch!($aes, aes_gcm::aead::consts::U15, 15),
+                16 => gcm_nonce_dispatch!($aes, aes_gcm::aead::consts::U16, 16),
                 _ => unreachable!(),
             }
         };

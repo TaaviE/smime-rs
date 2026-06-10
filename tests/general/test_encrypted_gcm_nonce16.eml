@@ -1,0 +1,20 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test AES-256-GCM 16-byte nonce
+Date: Wed, 10 Jun 2026 12:47:35 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=authEnveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIICAAYLKoZIhvcNAQkQARegggHvMIIB6wIBADGCAWcwggFjAgEAMEswMzEXMBUGA1UECgwOWm9u
+ZSBNZWRpYSBPw5wxGDAWBgNVBAMMD0thbGxlIEtyw7xwdGlqYQIUM7j4+uykYURct6WeiGk6df96
+1o0wDQYJKoZIhvcNAQEBBQAEggEALa0aUjzFsch8Kt1sSEIC4Kx9bkvHYu9DohKSQCMmxvNCIAAx
+yW+9MqW4cMvCUPkB5AWOTxqOdC3TvvinnEBl3Ln8sC9dftS/HflsSlSGA4Y4FyI7hLwagVMwL35O
+6QSDQ05vTJcxt8sEqZ7QjBnFi61x0DhsZ5WAt7mg6ggLZfiFRuHnSQRERLNZtxXlX2gS7796cHAL
+x5qFSk1zMERpq5fmqVExpIyx3fGZUijYBGlxx2vbZk/TajlBX0EXnojCBCTAhzFs/luXtygSmrYj
+SG+MDSM9JOr5snDOCUfMqOA3Myx4zG85d3Z6k/94steJX9x3gLjzqUEuSWx6WzVxYTBpBgkqhkiG
+9w0BBwEwIgYJYIZIAWUDBAEuMBUEEKJGqe28yEHSJeZuaZKpoEwCARCAOMkWanJIaRZ1/HSQ/d56
+MkTNSUakcwqn4A5x+AzG4hakJ17BDQvxNeaqQO4UiuXXJbZf6uwzDFL6BBB8+i+S/zQixNaVKbCL
+jQCs
