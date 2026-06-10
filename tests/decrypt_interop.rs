@@ -285,6 +285,26 @@ fn test_decrypt_oaep_sha1() {
     assert_eq!(enc.recipients[0].key_encryption_algorithm, "RSAES-OAEP");
 }
 
+// RFC 8017 A.2.1: hashFunc and the MGF1 hash are independent; OpenSSL encodes
+// the non-default maskGenFunc (mgf1 with SHA-384) explicitly here
+#[test]
+fn test_decrypt_oaep_mgf1_hash_mismatch() {
+    let eml = fs::read_to_string("tests/general/test_encrypted_oaep_mgf1_mismatch.eml").expect("Failed to read file");
+    let key_der =
+        pem::parse(fs::read("tests/keys/test_rsa.key").expect("Failed to read key")).expect("Failed to parse PEM").into_contents();
+    let cert_der = load_cert_der("tests/keys/test_rsa.key");
+    let result = smime::decrypt_and_verify_smime_from_eml_detailed(
+        eml,
+        vec![TrustStore::Debug].into(),
+        &smime::decrypt::DecryptionKeys { private_key_der: &key_der, recipient_cert_der: &cert_der, ..Default::default() },
+    );
+    assert_decrypted_ok(&result, "OpenSSL-generated test fixture");
+    let enc = result.encryption_info.as_ref().unwrap();
+    assert_eq!(enc.cipher, "AES-CBC");
+    assert_eq!(enc.key_size, "256-bit");
+    assert_eq!(enc.recipients[0].key_encryption_algorithm, "RSAES-OAEP");
+}
+
 #[test]
 fn test_decrypt_oaep_aes128() {
     let eml = fs::read_to_string("tests/general/test_encrypted_oaep_aes128.eml").expect("Failed to read file");

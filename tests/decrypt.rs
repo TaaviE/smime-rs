@@ -66,6 +66,136 @@ fn test_wrong_content_type_rejected() {
     );
 }
 
+#[test]
+fn test_oaep_non_mgf1_mask_gen_rejected() {
+    use smime::cryptography_x509::common::{
+        AlgorithmIdentifier, AlgorithmParameters, Asn1ReadableOrWritable, MaskGenAlgorithm, PSS_SHA256_HASH_ALG, RsaOaepParameters,
+    };
+    use smime::cryptography_x509::pkcs7::*;
+
+    let key_der = pem::parse(fs::read("tests/keys/test_rsa.key").expect("read")).expect("pem").into_contents();
+    let cert_der = load_cert_der("tests/keys/test_rsa.key");
+    let cert = asn1::parse_single::<smime::cryptography_x509::certificate::Certificate>(&cert_der).expect("cert");
+
+    // RFC 3560 §3 requires MGF1; any other maskGenFunc OID must be rejected.
+    let oaep = RsaOaepParameters {
+        hash_algorithm: PSS_SHA256_HASH_ALG,
+        mask_gen_algorithm: MaskGenAlgorithm { oid: asn1::oid!(1, 2, 840, 113549, 1, 1, 99), params: PSS_SHA256_HASH_ALG },
+        p_source_func: None,
+    };
+    let dummy_key = [0u8; 256];
+    let recipients = [RecipientInfo::KeyTransRecipientInfo(KeyTransRecipientInfo {
+        version: 0,
+        rid: RecipientIdentifier::IssuerAndSerialNumber(IssuerAndSerialNumber {
+            issuer: cert.tbs_cert.issuer.clone(),
+            serial_number: cert.tbs_cert.serial,
+        }),
+        key_encryption_algorithm: AlgorithmIdentifier {
+            oid: asn1::DefinedByMarker::marker(),
+            params: AlgorithmParameters::RsaesOaep(Box::new(oaep)),
+        },
+        encrypted_key: &dummy_key,
+    })];
+    let iv = [0u8; 16];
+    let dummy_ct = [0u8; 16];
+    let enveloped = EnvelopedData {
+        version: 0,
+        originator_info: None,
+        recipient_infos: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(&recipients)),
+        encrypted_content_info: EncryptedContentInfo {
+            content_type: PKCS7_DATA_OID,
+            content_encryption_algorithm: AlgorithmIdentifier {
+                oid: asn1::DefinedByMarker::marker(),
+                params: AlgorithmParameters::Aes128Cbc(iv),
+            },
+            encrypted_content: Some(&dummy_ct),
+        },
+        unprotected_attrs: None,
+    };
+
+    let der = asn1::write_single(&enveloped).unwrap();
+    let parsed: EnvelopedData = asn1::parse_single(&der).unwrap();
+    let err = smime::decrypt::decrypt_enveloped_data(
+        &parsed,
+        &smime::decrypt::DecryptionKeys { private_key_der: &key_der, recipient_cert_der: &cert_der, ..Default::default() },
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, SmimeError::UnsupportedKeyEncryptionAlg { ref alg } if alg.contains("maskGenFunc")),
+        "expected maskGenFunc error, got: {:?}",
+        err,
+    );
+}
+
+#[test]
+fn test_oaep_mgf1_sha1_with_sha256_hash_decrypts() {
+    use rsa::pkcs8::DecodePrivateKey as _;
+    use smime::cryptography_x509::common::{
+        AlgorithmIdentifier, AlgorithmParameters, Asn1ReadableOrWritable, PSS_SHA1_MASK_GEN_ALG, PSS_SHA256_HASH_ALG, RsaOaepParameters,
+    };
+    use smime::cryptography_x509::pkcs7::*;
+
+    let key_der = pem::parse(fs::read("tests/keys/test_rsa.key").expect("read")).expect("pem").into_contents();
+    let cert_der = load_cert_der("tests/keys/test_rsa.key");
+    let cert = asn1::parse_single::<smime::cryptography_x509::certificate::Certificate>(&cert_der).expect("cert");
+
+    // RFC 8017 A.2.1: hashFunc and the MGF1 hash are independent; SHA-256 with the
+    // default mgf1SHA1 is legal (and what Java's OAEPWithSHA-256AndMGF1Padding emits).
+    let plaintext = b"mixed OAEP digests";
+    let cek = [0x42u8; 16];
+    let iv = [7u8; 16];
+    let encrypted_content = smime::encrypt::encrypt_aes_cbc(&cek, &iv, plaintext);
+
+    let private_key = rsa::RsaPrivateKey::from_pkcs8_der(&key_der).expect("rsa key");
+    let mut rng = rsa::rand_core::UnwrapErr(getrandom::SysRng);
+    let encrypted_key = private_key
+        .to_public_key()
+        .encrypt(&mut rng, rsa::Oaep::<sha2::Sha256, sha1::Sha1>::new_with_mgf_hash(), &cek)
+        .expect("OAEP encrypt");
+
+    let oaep = RsaOaepParameters { hash_algorithm: PSS_SHA256_HASH_ALG, mask_gen_algorithm: PSS_SHA1_MASK_GEN_ALG, p_source_func: None };
+    let recipients = [RecipientInfo::KeyTransRecipientInfo(KeyTransRecipientInfo {
+        version: 0,
+        rid: RecipientIdentifier::IssuerAndSerialNumber(IssuerAndSerialNumber {
+            issuer: cert.tbs_cert.issuer.clone(),
+            serial_number: cert.tbs_cert.serial,
+        }),
+        key_encryption_algorithm: AlgorithmIdentifier {
+            oid: asn1::DefinedByMarker::marker(),
+            params: AlgorithmParameters::RsaesOaep(Box::new(oaep)),
+        },
+        encrypted_key: &encrypted_key,
+    })];
+    let enveloped = EnvelopedData {
+        version: 0,
+        originator_info: None,
+        recipient_infos: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(&recipients)),
+        encrypted_content_info: EncryptedContentInfo {
+            content_type: PKCS7_DATA_OID,
+            content_encryption_algorithm: AlgorithmIdentifier {
+                oid: asn1::DefinedByMarker::marker(),
+                params: AlgorithmParameters::Aes128Cbc(iv),
+            },
+            encrypted_content: Some(&encrypted_content),
+        },
+        unprotected_attrs: None,
+    };
+
+    let der = asn1::write_single(&enveloped).unwrap();
+    let parsed: EnvelopedData = asn1::parse_single(&der).unwrap();
+    let (content, warnings) = smime::decrypt::decrypt_enveloped_data(
+        &parsed,
+        &smime::decrypt::DecryptionKeys { private_key_der: &key_der, recipient_cert_der: &cert_der, ..Default::default() },
+    )
+    .expect("mixed-digest OAEP should decrypt");
+    assert_eq!(content.as_deref(), Some(plaintext.as_slice()));
+    assert!(
+        warnings.iter().any(|w| matches!(w, SmimeError::WeakKeyEncryptionAlg { alg } if alg.contains("SHA-1"))),
+        "expected SHA-1 weakness warning, got: {:?}",
+        warnings,
+    );
+}
+
 // Fixtures below are written by our own `create-cms` (nested, additional, multi-recipient)
 
 #[test]

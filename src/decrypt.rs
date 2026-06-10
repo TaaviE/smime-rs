@@ -1,5 +1,5 @@
 use crate::cryptography_x509::common::AlgorithmParameters;
-use crate::cryptography_x509::oid::SUBJECT_KEY_IDENTIFIER_OID;
+use crate::cryptography_x509::oid::{MGF1_OID, SUBJECT_KEY_IDENTIFIER_OID};
 use crate::cryptography_x509::pkcs7::{
     AuthEnvelopedData, EnvelopedData, IssuerAndSerialNumber, KeyAgreeRecipientInfo, KeyTransRecipientInfo, OriginatorIdentifierOrKey,
     PKCS7_DATA_OID, RecipientInfo,
@@ -243,27 +243,37 @@ fn decrypt_ktri_cek(private_key_der: &[u8], recipient_info: &KeyTransRecipientIn
                     alg: format!("non-MGF1 OAEP maskGenFunc: {}", oaep_params.mask_gen_algorithm.oid),
                 });
             }
-            let mgf_hash_oid = oaep_params.mask_gen_algorithm.params.oid();
-            let hash_oid = oaep_params.hash_algorithm.oid();
-            if mgf_hash_oid != hash_oid {
-                return Err(SmimeError::UnsupportedKeyEncryptionAlg {
-                    alg: format!("RSAES-OAEP MGF1 hash ({}) differs from hashFunc ({})", mgf_hash_oid, hash_oid),
-                });
-            }
+            // RFC 8017 A.2.1: hashFunc and the MGF1 hash are independent choices,
+            // e.g. Java's OAEPWithSHA-256AndMGF1Padding defaults MGF1 to SHA-1.
             fn oaep_decrypt<D: sha2::Digest + sha2::digest::FixedOutputReset>(
                 key: &RsaPrivateKey,
                 ct: &[u8],
+                mgf1_hash: &AlgorithmParameters<'_>,
             ) -> Result<Vec<u8>, SmimeError> {
-                key.decrypt(Oaep::<D>::new(), ct).map_err(|e| SmimeError::DecryptionFailed { err: e.to_string() })
+                match mgf1_hash {
+                    AlgorithmParameters::Sha1(_) => key.decrypt(Oaep::<D, sha1::Sha1>::new_with_mgf_hash(), ct),
+                    AlgorithmParameters::Sha256(_) => key.decrypt(Oaep::<D, sha2::Sha256>::new_with_mgf_hash(), ct),
+                    AlgorithmParameters::Sha384(_) => key.decrypt(Oaep::<D, sha2::Sha384>::new_with_mgf_hash(), ct),
+                    AlgorithmParameters::Sha512(_) => key.decrypt(Oaep::<D, sha2::Sha512>::new_with_mgf_hash(), ct),
+                    other => {
+                        return Err(SmimeError::UnsupportedKeyEncryptionAlg {
+                            alg: format!("RSAES-OAEP with unsupported MGF1 hash: {:?}", other),
+                        });
+                    }
+                }
+                .map_err(|e| SmimeError::DecryptionFailed { err: e.to_string() })
+            }
+            let mgf1_hash = &oaep_params.mask_gen_algorithm.params.params;
+            if matches!(&oaep_params.hash_algorithm.params, AlgorithmParameters::Sha1(_))
+                || matches!(mgf1_hash, AlgorithmParameters::Sha1(_))
+            {
+                warnings.push(SmimeError::WeakKeyEncryptionAlg { alg: "RSAES-OAEP with SHA-1".into() });
             }
             match &oaep_params.hash_algorithm.params {
-                AlgorithmParameters::Sha1(_) => {
-                    warnings.push(SmimeError::WeakKeyEncryptionAlg { alg: "RSAES-OAEP with SHA-1".into() });
-                    oaep_decrypt::<sha1::Sha1>(&private_key, encrypted_key)
-                }
-                AlgorithmParameters::Sha256(_) => oaep_decrypt::<sha2::Sha256>(&private_key, encrypted_key),
-                AlgorithmParameters::Sha384(_) => oaep_decrypt::<sha2::Sha384>(&private_key, encrypted_key),
-                AlgorithmParameters::Sha512(_) => oaep_decrypt::<sha2::Sha512>(&private_key, encrypted_key),
+                AlgorithmParameters::Sha1(_) => oaep_decrypt::<sha1::Sha1>(&private_key, encrypted_key, mgf1_hash),
+                AlgorithmParameters::Sha256(_) => oaep_decrypt::<sha2::Sha256>(&private_key, encrypted_key, mgf1_hash),
+                AlgorithmParameters::Sha384(_) => oaep_decrypt::<sha2::Sha384>(&private_key, encrypted_key, mgf1_hash),
+                AlgorithmParameters::Sha512(_) => oaep_decrypt::<sha2::Sha512>(&private_key, encrypted_key, mgf1_hash),
                 other => Err(SmimeError::UnsupportedKeyEncryptionAlg { alg: format!("RSAES-OAEP with unsupported hash: {:?}", other) }),
             }
         }
