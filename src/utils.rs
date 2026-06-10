@@ -327,6 +327,9 @@ fn sort_cms_implicit_sets(data: &mut [u8]) -> Result<(), String> {
             // For signerInfos, we need to look inside each SignerInfo for implicit SET OF
             0x31 if tlv.is_constructed => {
                 sort_signer_infos_implicit_sets(data, pos + tlv.header_len, tlv.content_len)?;
+                // Sorting signedAttrs changed the SignerInfo encodings, so the SET OF
+                // order established by ber_to_der may no longer be canonical (X.690 11.6)
+                sort_children_in_place(data, pos, tlv.header_len, tlv.content_len)?;
             }
             _ => {}
         }
@@ -441,6 +444,23 @@ mod tests {
         // constructed OCTET STRING containing an INTEGER segment
         let input = [0x24, 0x80, 0x02, 0x01, 0x05, 0x00, 0x00];
         assert!(ber_to_der(&input).is_err());
+    }
+
+    #[test]
+    fn ber_to_der_cms_resorts_signer_infos_after_inner_attr_sort() {
+        // Two SignerInfos whose SET OF order inverts once their [0] signedAttrs are
+        // sorted: with attrs unsorted B (..04..) < A (..05..), with attrs sorted
+        // A' (..01..) < B' (..02..). The final SET OF must use the sorted encodings.
+        let si_a = [0x30, 0x08, 0xA0, 0x06, 0x02, 0x01, 0x05, 0x02, 0x01, 0x01];
+        let si_b = [0x30, 0x08, 0xA0, 0x06, 0x02, 0x01, 0x04, 0x02, 0x01, 0x02];
+        // ContentInfo { id-signedData, [0] { SignedData SEQUENCE { SET { A, B } } } }
+        let header = [0x30, 0x25, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02, 0xA0, 0x18, 0x30, 0x16, 0x31, 0x14];
+        let input = [header.as_slice(), &si_a, &si_b].concat();
+
+        let si_a_sorted = [0x30, 0x08, 0xA0, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x05];
+        let si_b_sorted = [0x30, 0x08, 0xA0, 0x06, 0x02, 0x01, 0x02, 0x02, 0x01, 0x04];
+        let expected = [header.as_slice(), &si_a_sorted, &si_b_sorted].concat();
+        assert_eq!(ber_to_der_cms(&input).unwrap(), expected);
     }
 
     #[test]
