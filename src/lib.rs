@@ -20,7 +20,7 @@ mod decrypt_verify;
 #[cfg(feature = "encrypt")]
 pub mod encrypt;
 pub mod errors;
-#[cfg(feature = "decrypt")]
+#[cfg(feature = "pkcs12")]
 pub mod pkcs12_utils;
 
 use crate::cryptography_x509::certificate::Certificate;

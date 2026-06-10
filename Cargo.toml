@@ -78,7 +78,8 @@ des = { version = "0.9.0", optional = true }
 [features]
 encrypt = ["aes", "cbc", "aes-gcm", "aes-kw", "ansi-x963-kdf",
     "p256/ecdh", "p384/ecdh", "p521/ecdh"]
-decrypt = ["encrypt", "pbkdf2", "x25519-dalek", "hkdf", "pkcs12"]
+pkcs12 = ["dep:pkcs12", "dep:pbkdf2", "aes", "cbc"]
+decrypt = ["encrypt", "pkcs12", "x25519-dalek", "hkdf"]
 decrypt-3des = ["decrypt", "des"]
 decrypt-ccm = ["decrypt", "ccm"]
 validation-proxy = ["actix-web"]

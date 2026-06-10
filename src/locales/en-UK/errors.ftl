@@ -35,6 +35,10 @@ err-unsupported-content-encryption-alg = Unsupported content encryption algorith
 err-no-matching-recipient = No matching recipient for the provided private key
 err-private-key-parse-failed = Failed to parse private key: {$err}
 err-stapled-ocsp-revoked = Certificate '{$subject}' was revoked by a stapled OCSP response
+err-pkcs12-password-required = The PKCS#12 file requires a password
+err-pkcs12-wrong-password = Wrong password for the PKCS#12 file
+err-pkcs12-no-certificate = No subscriber certificate found in the PKCS#12 file
+err-pkcs12-parse = Error reading the PKCS#12 file: {$err}
 
 warn-cms-version-mismatch = {$structure} version is {$actual}, expected {$expected}
 warn-attribute-cardinality = Multiple {$attr} attributes present for signer: {$idx}

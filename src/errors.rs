@@ -106,6 +106,12 @@ pub enum SmimeError {
     StapledOcspRevoked {
         subject: String,
     },
+    Pkcs12PasswordRequired,
+    Pkcs12WrongPassword,
+    Pkcs12NoCertificate,
+    Pkcs12Parse {
+        err: String,
+    },
     Raw(String),
     // Warnings
     CmsVersionMismatch {
@@ -195,6 +201,10 @@ impl SmimeError {
             SmimeError::NoMatchingRecipient => "err-no-matching-recipient",
             SmimeError::PrivateKeyParseFailed { .. } => "err-private-key-parse-failed",
             SmimeError::StapledOcspRevoked { .. } => "err-stapled-ocsp-revoked",
+            SmimeError::Pkcs12PasswordRequired => "err-pkcs12-password-required",
+            SmimeError::Pkcs12WrongPassword => "err-pkcs12-wrong-password",
+            SmimeError::Pkcs12NoCertificate => "err-pkcs12-no-certificate",
+            SmimeError::Pkcs12Parse { .. } => "err-pkcs12-parse",
             SmimeError::Raw(_) => "raw",
             // Warnings
             SmimeError::CmsVersionMismatch { .. } => "warn-cms-version-mismatch",
@@ -227,7 +237,8 @@ impl SmimeError {
             | SmimeError::DigestVerify { err }
             | SmimeError::SigVerify { err }
             | SmimeError::DecryptionFailed { err }
-            | SmimeError::PrivateKeyParseFailed { err } => {
+            | SmimeError::PrivateKeyParseFailed { err }
+            | SmimeError::Pkcs12Parse { err } => {
                 args.insert("err".to_string(), FluentValue::from(err.clone()));
             }
             SmimeError::LoadCaBundle { store, err } => {
@@ -280,6 +291,9 @@ impl SmimeError {
             | SmimeError::NoPkcs7Content
             | SmimeError::UnexpectedEContentType
             | SmimeError::NoMatchingRecipient
+            | SmimeError::Pkcs12PasswordRequired
+            | SmimeError::Pkcs12WrongPassword
+            | SmimeError::Pkcs12NoCertificate
             | SmimeError::Raw(_) => {}
             // Warnings
             SmimeError::CmsVersionMismatch { structure, expected, actual, .. } => {
