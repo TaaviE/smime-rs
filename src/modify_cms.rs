@@ -16,6 +16,7 @@ use smime::cryptography_x509_verification::ops::CryptoOps;
 use smime::types::KeyCryptoOps;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -368,7 +369,11 @@ fn run_modify(args: ModifyArgs) -> Result<(), Box<dyn std::error::Error>> {
             Vec::new()
         } else {
             let mut crl_data = None;
-            let client = reqwest::blocking::Client::new();
+            let client = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
             for url in &urls {
                 if let Err(e) = validate_fetch_url(url) {
                     println!("Warning: Skipping CRL URL: {}", e);
@@ -418,7 +423,11 @@ fn run_modify(args: ModifyArgs) -> Result<(), Box<dyn std::error::Error>> {
         } else {
             let ocsp_req = create_ocsp_request(&py_subject_cert, &intermediate_cert)?;
             let mut ocsp_data = None;
-            let client = reqwest::blocking::Client::new();
+            let client = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
             for url in &urls {
                 if let Err(e) = validate_fetch_url(url) {
                     println!("Warning: Skipping OCSP URL: {}", e);
