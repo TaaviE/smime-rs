@@ -727,7 +727,7 @@ pub fn decrypt_auth_enveloped_data(
     // AEAD decrypt
     match &cea {
         AlgorithmParameters::Aes128Gcm(p) | AlgorithmParameters::Aes192Gcm(p) | AlgorithmParameters::Aes256Gcm(p) => {
-            decrypt_aes_gcm(&key, p.nonce, &aad, ciphertext, auth_enveloped.mac).map(|pt| (Some(pt), warnings))
+            decrypt_aes_gcm(&key, p.nonce, &aad, ciphertext, auth_enveloped.mac, p.icv_len as usize).map(|pt| (Some(pt), warnings))
         }
         #[cfg(feature = "decrypt-ccm")]
         AlgorithmParameters::Aes128Ccm(p) | AlgorithmParameters::Aes192Ccm(p) | AlgorithmParameters::Aes256Ccm(p) => {
@@ -737,27 +737,49 @@ pub fn decrypt_auth_enveloped_data(
     }
 }
 
-fn decrypt_aes_gcm(key: &[u8], nonce: &[u8], aad: &[u8], ciphertext: &[u8], tag: &[u8]) -> Result<Vec<u8>, SmimeError> {
+fn decrypt_aes_gcm(key: &[u8], nonce: &[u8], aad: &[u8], ciphertext: &[u8], tag: &[u8], tag_len: usize) -> Result<Vec<u8>, SmimeError> {
     use aes_gcm::{KeyInit, aead::AeadInOut};
 
     let nonce: &[u8; 12] =
         nonce.try_into().map_err(|_| SmimeError::DecryptionFailed { err: format!("GCM nonce must be 12 bytes, got {}", nonce.len()) })?;
-    let tag: &[u8; 16] =
-        tag.try_into().map_err(|_| SmimeError::DecryptionFailed { err: format!("GCM tag must be 16 bytes, got {}", tag.len()) })?;
+    if tag.len() != tag_len {
+        return Err(SmimeError::DecryptionFailed { err: format!("GCM tag length {} does not match icvLen {}", tag.len(), tag_len) });
+    }
+    // RFC 5084 §3.2: AES-GCM-ICVlen ::= INTEGER (12 | 13 | 14 | 15 | 16).
+    // The aes-gcm crate requires the tag length as a type-level param, so dispatch via macros.
+    if !(12..=16).contains(&tag_len) {
+        return Err(SmimeError::UnsupportedContentEncryptionAlg {
+            alg: format!("AES-GCM ICVlen {} not valid per RFC 5084 (must be 12..16)", tag_len),
+        });
+    }
 
     let mut buf = ciphertext.to_vec();
     macro_rules! gcm_decrypt {
-        ($cipher:ty) => {
-            <$cipher>::new_from_slice(key)
+        ($aes:ty, $tag_ty:ty, $tag_len_val:literal) => {{
+            type C = aes_gcm::AesGcm<$aes, aes_gcm::aead::consts::U12, $tag_ty>;
+            let t: &[u8; $tag_len_val] = tag.try_into().unwrap();
+            C::new_from_slice(key)
                 .map_err(|e| SmimeError::DecryptionFailed { err: format!("AES-GCM init: {}", e) })?
-                .decrypt_inout_detached(nonce.into(), aad, (&mut buf[..]).into(), tag.into())
+                .decrypt_inout_detached(nonce.into(), aad, (&mut buf[..]).into(), t.into())
                 .map_err(|e| SmimeError::DecryptionFailed { err: format!("AES-GCM: {}", e) })?
+        }};
+    }
+    macro_rules! gcm_tag_dispatch {
+        ($aes:ty) => {
+            match tag_len {
+                12 => gcm_decrypt!($aes, aes_gcm::aead::consts::U12, 12),
+                13 => gcm_decrypt!($aes, aes_gcm::aead::consts::U13, 13),
+                14 => gcm_decrypt!($aes, aes_gcm::aead::consts::U14, 14),
+                15 => gcm_decrypt!($aes, aes_gcm::aead::consts::U15, 15),
+                16 => gcm_decrypt!($aes, aes_gcm::aead::consts::U16, 16),
+                _ => unreachable!(),
+            }
         };
     }
     match key.len() {
-        16 => gcm_decrypt!(aes_gcm::Aes128Gcm),
-        24 => gcm_decrypt!(aes_gcm::AesGcm<Aes192, aes_gcm::aead::consts::U12>),
-        32 => gcm_decrypt!(aes_gcm::Aes256Gcm),
+        16 => gcm_tag_dispatch!(Aes128),
+        24 => gcm_tag_dispatch!(Aes192),
+        32 => gcm_tag_dispatch!(Aes256),
         _ => {
             return Err(SmimeError::UnsupportedContentEncryptionAlg {
                 alg: format!("AES-GCM with {}-bit key not supported", key.len() * 8),

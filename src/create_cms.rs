@@ -296,7 +296,6 @@ fn verify_enveloped_roundtrip(der: &[u8], keys: &smime::decrypt::DecryptionKeys,
     assert_eq!(pt.0.as_deref(), Some(expected));
 }
 
-#[cfg(feature = "decrypt-ccm")]
 fn verify_auth_enveloped_roundtrip(der: &[u8], keys: &smime::decrypt::DecryptionKeys, expected: &[u8]) {
     let parsed: ContentInfo = asn1::parse_single(der).unwrap();
     let aed = match parsed.content {
@@ -722,6 +721,7 @@ fn gen_x25519_fixtures() {
 
 fn gen_additional_fixtures() {
     gen_x25519_fixtures();
+    gen_gcm_icvlen12_fixture();
     #[cfg(feature = "decrypt-ccm")]
     gen_ccm_fixtures();
 }
@@ -846,6 +846,52 @@ fn gen_ccm_fixtures() {
         let path = format!("tests/general/test_encrypted_ccm{}.eml", bits);
         write_fixture_eml(&path, &der, &format!("Test AES-{}-CCM", bits), "authEnveloped-data");
     }
+}
+
+/// AES-256-GCM AuthEnvelopedData with GCMParameters ICVlen omitted (DEFAULT 12)
+/// and a 12-byte tag, per RFC 5084 §3.2.
+fn gen_gcm_icvlen12_fixture() {
+    use aes_gcm::{KeyInit, aead::AeadInOut};
+
+    let plaintext = b"Content-Type: text/plain\r\n\r\nAES-GCM ICVlen 12 test\r\n";
+    let cek: [u8; 32] = random_bytes();
+    let nonce: [u8; 12] = random_bytes();
+
+    let mut ciphertext = plaintext.to_vec();
+    type Gcm = aes_gcm::AesGcm<aes::Aes256, aes_gcm::aead::consts::U12, aes_gcm::aead::consts::U12>;
+    let tag = Gcm::new_from_slice(&cek).unwrap().encrypt_inout_detached((&nonce).into(), &[], (&mut ciphertext[..]).into()).unwrap();
+
+    let (ri_der, key_der, cert_der) = build_ktri(&cek, "tests/keys/test_rsa.key", "tests/keys/test_rsa.pem");
+    let ri: RecipientInfo = asn1::parse_single(&ri_der).unwrap();
+    let ris = [ri];
+
+    let auth_enveloped = AuthEnvelopedData {
+        version: 0,
+        originator_info: None,
+        recipient_infos: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(&ris)),
+        auth_encrypted_content_info: EncryptedContentInfo {
+            content_type: PKCS7_DATA_OID,
+            content_encryption_algorithm: AlgorithmIdentifier {
+                oid: asn1::DefinedByMarker::marker(),
+                params: AlgorithmParameters::Aes256Gcm(GcmParameters { nonce: &nonce, icv_len: 12 }),
+            },
+            encrypted_content: Some(&ciphertext),
+        },
+        auth_attrs: None,
+        mac: tag.as_slice(),
+        unauth_attrs: None,
+    };
+
+    let content_info = ContentInfo {
+        content_type: asn1::DefinedByMarker::marker(),
+        content: Content::AuthEnvelopedData(asn1::Explicit::new(Box::new(auth_enveloped))),
+    };
+    let der = asn1::write_single(&content_info).unwrap();
+
+    let keys = smime::decrypt::DecryptionKeys { private_key_der: &key_der, recipient_cert_der: &cert_der, ..Default::default() };
+    verify_auth_enveloped_roundtrip(&der, &keys, plaintext);
+
+    write_fixture_eml("tests/general/test_encrypted_gcm_icvlen12.eml", &der, "Test AES-256-GCM ICVlen 12", "authEnveloped-data");
 }
 
 /// Build KTRI (RSA key transport). Returns (ri_der, key_der, cert_der).

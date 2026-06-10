@@ -1,0 +1,19 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test AES-256-GCM ICVlen 12
+Date: Wed, 10 Jun 2026 07:39:23 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=authEnveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIIB8QYLKoZIhvcNAQkQARegggHgMIIB3AIBADGCAWcwggFjAgEAMEswMzEXMBUGA1UECgwOWm9u
+ZSBNZWRpYSBPw5wxGDAWBgNVBAMMD0thbGxlIEtyw7xwdGlqYQIUM7j4+uykYURct6WeiGk6df96
+1o0wDQYJKoZIhvcNAQEBBQAEggEAKbOyahmd2BVvX4JGROlVrx9qVuBravrIm1Ehk6y/mSO0bf5d
+xmVtoH4VDaTPMYMBpV8GqOsDKOWa304/vTkhWkKTlfrHG1MK3H3kFgNZ5B2jSjUDXOTh7xMft+Mk
+x3+3C1JTfVtNNciY1cBfT8jDPEH6UHPtPn0ZwHABh/jRXKv3dPMRjJJOKcZrMXOa75a8gnpNIw2q
+no2botcC+SJ3Hyp718ePgJqk0SE9Lgrizr5/rkZaJ4uGlB0E9dsSQXXw6SFjekpx6pdFdhEGXQaA
+kX/r0NAVxaf2rqjyq15RpxP2r3VoN8Yi/nf0i8Y9SthoNoY4tPWDTT86Pat9jXBidTBeBgkqhkiG
+9w0BBwEwGwYJYIZIAWUDBAEuMA4EDE5iC9vodS3NMyd8KoA0JLTDfCOpbxpwH0VPoLNI71BW6RiC
+HDYk0arSZz8bWfzo/2GTQGcbHHxF+K/Ad3Y9PMgMPQQMC3v21ZdO9IwSyajd
