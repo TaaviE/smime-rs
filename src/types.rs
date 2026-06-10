@@ -155,16 +155,16 @@ pub struct RecipientInfoSummary {
     pub issuer: String,
     /// Serial number (hex)
     pub serial_number: String,
-    /// Key encryption algorithm, RFC name (e.g. "RSAES-PKCS1-v1_5", "RSAES-OAEP")
+    /// Key encryption algorithm, RFC name (e.g. `RSAES-PKCS1-v1_5`, `RSAES-OAEP`)
     pub key_encryption_algorithm: String,
 }
 
 /// Information about the encryption layer of the message
 #[derive(Clone, Debug, Serialize, Tsify)]
 pub struct EncryptionInfo {
-    /// Content encryption cipher without key size (e.g. "AES-CBC", "3DES-CBC", "RC2-CBC")
+    /// Content encryption cipher without key size (e.g. `AES-CBC`, `3DES-CBC`, `RC2-CBC`)
     pub cipher: String,
-    /// Key size (e.g. "128-bit", "192-bit", "256-bit")
+    /// Key size (e.g. `128-bit`, `192-bit`, `256-bit`)
     pub key_size: String,
     /// All recipients listed in the EnvelopedData
     pub recipients: Vec<RecipientInfoSummary>,
