@@ -190,38 +190,11 @@ fn pbes2_decrypt(alg: &AlgorithmIdentifier, password: &str, ciphertext: &[u8]) -
         _ => return Err(P12Error::Other(format!("Unsupported PBES2 cipher: {}", enc.oid()))),
     };
 
-    if pbkdf2.salt.len() < 8 {
-        return Err(P12Error::Other(format!("PBKDF2 salt length {} is below minimum of 8 bytes", pbkdf2.salt.len())));
+    let mut warnings = Vec::new();
+    let key = crate::cms_utils::derive_pbkdf2_key(pbkdf2, password, key_len, &mut warnings).map_err(P12Error::Other)?;
+    for warning in &warnings {
+        eprintln!("Warning: {}", warning.localize_en_uk());
     }
-    // RFC 8018 paragraph 5.2: iterationCount is INTEGER (1..MAX)
-    if pbkdf2.iteration_count == 0 {
-        return Err(P12Error::Other("PBKDF2 iteration count 0 is invalid".to_owned()));
-    }
-    if pbkdf2.iteration_count > 100_000_000 {
-        return Err(P12Error::Other(format!("PBKDF2 iteration count {} is unreasonably high", pbkdf2.iteration_count)));
-    }
-    if pbkdf2.iteration_count < 100_000 {
-        eprintln!("Warning: PBKDF2 iteration count {} is below recommended minimum of 100000", pbkdf2.iteration_count);
-    }
-    // RFC 8018 paragraph 6.2: PBES2 takes the key length from the encryption scheme;
-    // an explicit keyLength must agree with it.
-    if let Some(key_length) = pbkdf2.key_length {
-        if key_length != key_len as u64 {
-            return Err(P12Error::Other(format!("PBKDF2 keyLength {} does not match cipher key length {}", key_length, key_len)));
-        }
-    }
-
-    // RFC 8018 paragraph A.2: dispatch on the PRF (default is hmacWithSHA1)
-    let rounds = pbkdf2.iteration_count as u32;
-    let mut key = vec![0u8; key_len];
-    match &pbkdf2.prf.params {
-        AlgorithmParameters::HmacWithSha1(_) => pbkdf2::pbkdf2_hmac::<sha1::Sha1>(password.as_bytes(), pbkdf2.salt, rounds, &mut key),
-        AlgorithmParameters::HmacWithSha224(_) => return Err(P12Error::Other("PBKDF2 with HMAC-SHA-224 not supported".to_owned())),
-        AlgorithmParameters::HmacWithSha256(_) => pbkdf2::pbkdf2_hmac::<sha2::Sha256>(password.as_bytes(), pbkdf2.salt, rounds, &mut key),
-        AlgorithmParameters::HmacWithSha384(_) => pbkdf2::pbkdf2_hmac::<sha2::Sha384>(password.as_bytes(), pbkdf2.salt, rounds, &mut key),
-        AlgorithmParameters::HmacWithSha512(_) => pbkdf2::pbkdf2_hmac::<sha2::Sha512>(password.as_bytes(), pbkdf2.salt, rounds, &mut key),
-        _ => return Err(P12Error::Other(format!("Unsupported PBKDF2 PRF: {}", pbkdf2.prf.oid()))),
-    };
 
     let mut buf = ciphertext.to_vec();
     // A padding failure after decryption almost always means the key was derived

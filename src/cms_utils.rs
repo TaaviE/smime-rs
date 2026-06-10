@@ -313,3 +313,53 @@ pub fn verify_econtent_signature(
     };
     do_verify_signature(public_key, digest_algorithm, signature_algorithm, signature_value, &data)
 }
+
+/// Validate PBKDF2 parameters (RFC 8018 paragraph 5.2) and derive a `key_len`-octet key.
+/// Advisory findings (low iteration count, HMAC-SHA-1 PRF) are appended to `warnings`;
+/// hard violations return the error message for the caller to wrap in its own error type.
+#[cfg(feature = "pkcs12")]
+pub fn derive_pbkdf2_key(
+    params: &common::PBKDF2Params<'_>,
+    password: &str,
+    key_len: usize,
+    warnings: &mut Vec<SmimeError>,
+) -> Result<Vec<u8>, String> {
+    use common::AlgorithmParameters;
+
+    if params.salt.len() < 8 {
+        return Err(format!("PBKDF2 salt length {} is below minimum of 8 bytes", params.salt.len()));
+    }
+    // RFC 8018 paragraph 5.2: iterationCount is INTEGER (1..MAX)
+    if params.iteration_count == 0 {
+        return Err("PBKDF2 iteration count 0 is invalid".to_owned());
+    }
+    if params.iteration_count > 100_000_000 {
+        return Err(format!("PBKDF2 iteration count {} is unreasonably high", params.iteration_count));
+    }
+    if params.iteration_count < 100_000 {
+        warnings.push(SmimeError::Pbkdf2LowIterationCount { iterations: params.iteration_count });
+    }
+    // RFC 8018 paragraph 6.2: the key length comes from the encryption scheme;
+    // an explicit keyLength must agree with it.
+    if let Some(key_length) = params.key_length {
+        if key_length != key_len as u64 {
+            return Err(format!("PBKDF2 keyLength {} does not match cipher key length {}", key_length, key_len));
+        }
+    }
+
+    // RFC 8018 paragraph A.2: dispatch on the PRF (default is hmacWithSHA1)
+    let rounds = params.iteration_count as u32;
+    let mut key = vec![0u8; key_len];
+    match &params.prf.params {
+        AlgorithmParameters::HmacWithSha1(_) => {
+            warnings.push(SmimeError::WeakKeyEncryptionAlg { alg: "PBKDF2 with HMAC-SHA-1".into() });
+            pbkdf2::pbkdf2_hmac::<sha1::Sha1>(password.as_bytes(), params.salt, rounds, &mut key);
+        }
+        AlgorithmParameters::HmacWithSha224(_) => return Err("PBKDF2 with HMAC-SHA-224 not supported".to_owned()),
+        AlgorithmParameters::HmacWithSha256(_) => pbkdf2::pbkdf2_hmac::<sha2::Sha256>(password.as_bytes(), params.salt, rounds, &mut key),
+        AlgorithmParameters::HmacWithSha384(_) => pbkdf2::pbkdf2_hmac::<sha2::Sha384>(password.as_bytes(), params.salt, rounds, &mut key),
+        AlgorithmParameters::HmacWithSha512(_) => pbkdf2::pbkdf2_hmac::<sha2::Sha512>(password.as_bytes(), params.salt, rounds, &mut key),
+        _ => return Err(format!("Unsupported PBKDF2 PRF: {}", params.prf.oid())),
+    }
+    Ok(key)
+}

@@ -252,6 +252,60 @@ fn rfc3211_aes256_wrap_unwrap_roundtrip() {
     assert_eq!(recovered, cek);
 }
 
+/// Build a PWRI (AES-256-CBC KEK) with the given PBKDF2 parameters. The wrapped
+/// key is filler: parameter validation must fail before unwrapping is attempted.
+#[cfg(feature = "decrypt-pwri")]
+fn pwri_with_pbkdf2(salt: &[u8], iteration_count: u64, key_length: Option<u64>) -> Vec<u8> {
+    use smime::cryptography_x509::common::*;
+    use smime::cryptography_x509::pkcs7::PasswordRecipientInfo;
+
+    let inner_alg = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Aes256Cbc([0xBB; 16]) };
+    let inner_alg_der = asn1::write_single(&inner_alg).unwrap();
+    let inner_alg_tlv: asn1::Tlv = asn1::parse_single(&inner_alg_der).unwrap();
+    asn1::write_single(&PasswordRecipientInfo {
+        version: 0,
+        key_derivation_algorithm: Some(AlgorithmIdentifier {
+            oid: asn1::DefinedByMarker::marker(),
+            params: AlgorithmParameters::Pbkdf2(PBKDF2Params {
+                salt,
+                iteration_count,
+                key_length,
+                prf: Box::new(AlgorithmIdentifier {
+                    oid: asn1::DefinedByMarker::marker(),
+                    params: AlgorithmParameters::HmacWithSha256(Some(())),
+                }),
+            }),
+        }),
+        key_encryption_algorithm: AlgorithmIdentifier {
+            oid: asn1::DefinedByMarker::marker(),
+            params: AlgorithmParameters::Other(asn1::oid!(1, 2, 840, 113549, 1, 9, 16, 3, 9), Some(inner_alg_tlv)),
+        },
+        encrypted_key: &[0u8; 48],
+    })
+    .unwrap()
+}
+
+#[cfg(feature = "decrypt-pwri")]
+#[test]
+fn pwri_pbkdf2_parameter_validation() {
+    use smime::cryptography_x509::pkcs7::PasswordRecipientInfo;
+
+    let expect_err = |der: Vec<u8>, expected: &str| {
+        let pwri: PasswordRecipientInfo = asn1::parse_single(&der).unwrap();
+        let err = smime::decrypt::decrypt_pwri_cek(Some("pw"), &pwri).expect_err(expected);
+        assert!(
+            matches!(err, SmimeError::DecryptionFailed { ref err } if err.contains(expected)),
+            "expected '{}', got: {:?}",
+            expected,
+            err
+        );
+    };
+    expect_err(pwri_with_pbkdf2(&[0xAA; 16], 0, None), "iteration count 0");
+    expect_err(pwri_with_pbkdf2(&[0xAA; 16], 100_000_001, None), "unreasonably high");
+    expect_err(pwri_with_pbkdf2(&[0xAA; 16], 1000, Some(16)), "keyLength 16 does not match cipher key length 32");
+    expect_err(pwri_with_pbkdf2(&[0xAA; 4], 1000, None), "salt length 4 is below minimum of 8 bytes");
+}
+
 // RFC 9709 Appendix B test vectors
 #[test]
 fn rfc9709_cek_hkdf_sha256_aes128_gcm() {

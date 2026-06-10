@@ -467,49 +467,8 @@ pub fn decrypt_pwri_cek(
         .as_ref()
         .ok_or_else(|| SmimeError::UnsupportedKeyEncryptionAlg { alg: "PWRI without keyDerivationAlgorithm".into() })?;
     let kek = match &kda.params {
-        AlgorithmParameters::Pbkdf2(params) => {
-            // RFC 8018 paragraph 5.2: iterationCount is INTEGER (1..MAX)
-            if params.iteration_count == 0 {
-                return Err(SmimeError::DecryptionFailed { err: "PBKDF2 iteration count 0 is invalid".into() });
-            }
-            if params.iteration_count < 100_000 {
-                warnings.push(SmimeError::Pbkdf2LowIterationCount { iterations: params.iteration_count });
-            }
-            if params.iteration_count > 100_000_000 {
-                return Err(SmimeError::DecryptionFailed {
-                    err: format!("PBKDF2 iteration count {} is unreasonably high", params.iteration_count),
-                });
-            }
-            // An explicit keyLength must agree with the KEK size implied by the PWRI cipher.
-            if let Some(key_length) = params.key_length {
-                if key_length != kek_len as u64 {
-                    return Err(SmimeError::DecryptionFailed {
-                        err: format!("PBKDF2 keyLength {} does not match KEK cipher key length {}", key_length, kek_len),
-                    });
-                }
-            }
-            let rounds = u32::try_from(params.iteration_count).map_err(|_| SmimeError::DecryptionFailed {
-                err: format!("PBKDF2 iteration count {} exceeds u32", params.iteration_count),
-            })?;
-            let mut kek = vec![0u8; kek_len];
-            match &params.prf.params {
-                AlgorithmParameters::HmacWithSha1(_) => {
-                    warnings.push(SmimeError::WeakKeyEncryptionAlg { alg: "PBKDF2 with HMAC-SHA-1".into() });
-                    pbkdf2::pbkdf2_hmac::<sha1::Sha1>(password.as_bytes(), params.salt, rounds, &mut kek);
-                }
-                AlgorithmParameters::HmacWithSha256(_) => {
-                    pbkdf2::pbkdf2_hmac::<sha2::Sha256>(password.as_bytes(), params.salt, rounds, &mut kek);
-                }
-                AlgorithmParameters::HmacWithSha384(_) => {
-                    pbkdf2::pbkdf2_hmac::<sha2::Sha384>(password.as_bytes(), params.salt, rounds, &mut kek);
-                }
-                AlgorithmParameters::HmacWithSha512(_) => {
-                    pbkdf2::pbkdf2_hmac::<sha2::Sha512>(password.as_bytes(), params.salt, rounds, &mut kek);
-                }
-                other => return Err(SmimeError::UnsupportedKeyEncryptionAlg { alg: format!("PBKDF2 PRF: {:?}", other) }),
-            }
-            kek
-        }
+        AlgorithmParameters::Pbkdf2(params) => crate::cms_utils::derive_pbkdf2_key(params, password, kek_len, &mut warnings)
+            .map_err(|err| SmimeError::DecryptionFailed { err })?,
         other => return Err(SmimeError::UnsupportedKeyEncryptionAlg { alg: format!("PWRI KDF: {:?}", other) }),
     };
 
