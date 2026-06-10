@@ -1,0 +1,23 @@
+From: =?UTF-8?B?QW51IEFsbGtpcmphc3RhamE=?= <anu@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test Ed25519 SHA-256 digest
+Date: Wed, 10 Jun 2026 07:57:31 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=signed-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIIC2AYJKoZIhvcNAQcCoIICyTCCAsUCAQExDTALBglghkgBZQMEAgEwLwYJKoZIhvcNAQcBoCIE
+IEhlbGxvIGZyb20gRWQyNTUxOSB3aXRoIFNIQS0yNTYhoIIBgzCCAX8wggExoAMCAQICFGGwdWMY
+2fa8DA/B/W8pm7jvJm73MAUGAytlcDA1MRcwFQYDVQQKDA5ab25lIE1lZGlhIE/DnDEaMBgGA1UE
+AwwRQW51IEFsbGtpcmphc3RhamEwHhcNMjYwNDAxMTQzODU5WhcNNDEwMzI4MTQzODU5WjA1MRcw
+FQYDVQQKDA5ab25lIE1lZGlhIE/DnDEaMBgGA1UEAwwRQW51IEFsbGtpcmphc3RhamEwKjAFBgMr
+ZXADIQCJi463wqFKlVRvn8+BgzfVhiHFO+6Q+x+vV0bfOAb1NaNTMFEwHQYDVR0OBBYEFMfvLntp
+WkWQBqax1ugziIklp3gUMB8GA1UdIwQYMBaAFMfvLntpWkWQBqax1ugziIklp3gUMA8GA1UdEwEB
+/wQFMAMBAf8wBQYDK2VwA0EA9N/WLxkCGneyKmiLaqoujnUuJr8WT58MKemyyrmvUl9+HX0AA2qF
+W7m5D/r/nRPPUkxi5CQzE9YXLgJpNlpfCzGB+DCB9QIBATBNMDUxFzAVBgNVBAoMDlpvbmUgTWVk
+aWEgT8OcMRowGAYDVQQDDBFBbnUgQWxsa2lyamFzdGFqYQIUYbB1YxjZ9rwMD8H9bymbuO8mbvcw
+CwYJYIZIAWUDBAIBoEswGAYJKoZIhvcNAQkDMQsGCSqGSIb3DQEHATAvBgkqhkiG9w0BCQQxIgQg
+1oj+zYKoyNGaLkONBVyYKwgYC3hKyPH2PejvtfoMFXUwBQYDK2VwBEARsBqsj895ioSdqQAvMZQ2
+NLkrzjIq+lrrE6Uc/I1bu/FF46pzd41t8cZsSbIRV5wjNX+uO6QF741qVcRx5roG

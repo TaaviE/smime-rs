@@ -203,6 +203,21 @@ fn test_ed25519() {
 }
 
 #[test]
+fn test_ed25519_sha256_digest() {
+    let eml = fs::read_to_string("tests/general/ed25519-sha256-digest.eml").expect("Failed to read eml file");
+    let result = verify_smime_from_eml_detailed(eml, vec![TrustStore::Debug].into());
+    println!("Result: {:#?}", result);
+    // Signature itself is valid; the RFC 8419 §3.1 digest rule must still be flagged
+    assert_eq!(result.signers.len(), 1);
+    assert!(result.signers[0].validation_details.checks.signature_matches_signed_data);
+    assert!(
+        result.failures.iter().any(|f| matches!(f, SmimeError::DigestAlgorithmWarning { detail, .. } if detail.contains("SHA512"))),
+        "expected Ed25519 digest algorithm failure, got: {:?}",
+        result.failures
+    );
+}
+
+#[test]
 fn test_no_message_digest_attr() {
     let eml = fs::read_to_string("tests/general/no-message-digest-attr.eml").expect("read");
     let result = verify_smime_from_eml_detailed(eml, vec![TrustStore::Debug].into());

@@ -45,6 +45,11 @@ enum SignCommands {
         #[arg(long, default_value = "tests/general/ed25519.eml")]
         output: PathBuf,
     },
+    /// Ed25519 signature with disallowed SHA-256 digest (RFC 8419 violation)
+    Ed25519Sha256 {
+        #[arg(long, default_value = "tests/general/ed25519-sha256-digest.eml")]
+        output: PathBuf,
+    },
     /// ML-DSA-44 signature with SHAKE-128 digest
     MlDsa44Shake128 {
         #[arg(long, default_value = "tests/pq/ml-dsa-44-shake128.eml")]
@@ -471,12 +476,45 @@ fn generate_ed25519(output: &PathBuf) {
         sha2::Sha512::digest(content).to_vec()
     };
 
-    let digest_alg = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Sha512(Some(())) };
+    // RFC 8419 §2.3: id-sha512 parameters MUST be absent
+    let digest_alg = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Sha512(None) };
 
     let cms_der = build_cms_der(&cert_der, &serial_bytes, &issuer_der, content, &digest_alg, &sig_alg, &content_hash, &sign_fn);
     verify_signed_cms(&cms_der);
 
     write_fixture_eml(output, &cms_der, "Test Ed25519", "signed-data");
+}
+
+fn generate_ed25519_sha256_digest(output: &PathBuf) {
+    use ed25519_dalek::Signer;
+    use ed25519_dalek::pkcs8::DecodePrivateKey;
+
+    let key_pem = fs::read_to_string("tests/keys/test_ed25519.key").expect("Failed to read tests/keys/test_ed25519.key");
+    let signing_key = ed25519_dalek::SigningKey::from_pkcs8_pem(&key_pem).expect("Failed to parse Ed25519 private key");
+
+    let cert_der = load_cert_der_for_fixtures("tests/keys/test_ed25519.pem");
+
+    let cert: smime::cryptography_x509::certificate::Certificate<'_> = asn1::parse_single(&cert_der).expect("Failed to parse certificate");
+    let issuer_der = asn1::write_single(&cert.tbs_cert.issuer).unwrap();
+    let serial_bytes = cert.tbs_cert.serial.as_bytes().to_vec();
+
+    let sig_alg = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Ed25519 };
+
+    let sign_fn = |data: &[u8]| -> Vec<u8> { signing_key.sign(data).to_bytes().to_vec() };
+
+    let content = b"Hello from Ed25519 with SHA-256!";
+    let content_hash = {
+        use sha2::Digest;
+        sha2::Sha256::digest(content).to_vec()
+    };
+
+    // Violates RFC 8419 §3.1: Ed25519 digestAlgorithm MUST be id-sha512
+    let digest_alg = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Sha256(None) };
+
+    let cms_der = build_cms_der(&cert_der, &serial_bytes, &issuer_der, content, &digest_alg, &sig_alg, &content_hash, &sign_fn);
+    verify_signed_cms(&cms_der);
+
+    write_fixture_eml(output, &cms_der, "Test Ed25519 SHA-256 digest", "signed-data");
 }
 
 fn generate_ml_dsa_44_shake128(output: &PathBuf) {
@@ -728,6 +766,7 @@ fn gen_additional_fixtures() {
 
 fn run_all() {
     generate_ed25519(&PathBuf::from("tests/general/ed25519.eml"));
+    generate_ed25519_sha256_digest(&PathBuf::from("tests/general/ed25519-sha256-digest.eml"));
     generate_ml_dsa_44_shake128(&PathBuf::from("tests/pq/ml-dsa-44-shake128.eml"));
     generate_ml_dsa_44_shake(&PathBuf::from("tests/pq/ml-dsa-44-shake.eml"));
     generate_ml_dsa_65_shake(&PathBuf::from("tests/pq/ml-dsa-65.eml"));
@@ -744,6 +783,7 @@ fn main() {
     match &cli.command {
         Commands::Sign { command } => match command {
             SignCommands::Ed25519 { output } => generate_ed25519(output),
+            SignCommands::Ed25519Sha256 { output } => generate_ed25519_sha256_digest(output),
             SignCommands::MlDsa44Shake128 { output } => generate_ml_dsa_44_shake128(output),
             SignCommands::MlDsa44Shake { output } => generate_ml_dsa_44_shake(output),
             SignCommands::MlDsa65Shake { output } => generate_ml_dsa_65_shake(output),

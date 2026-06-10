@@ -623,7 +623,8 @@ fn check_algorithms(signer: &SignerInfo<'_>, idx: usize) -> Result<Vec<SmimeErro
     // More discussion: https://github.com/openssl/openssl/issues/11413
     if let SignatureParameters::RSAPKCS1v15 { ref hash }
     | SignatureParameters::RSAPSS { ref hash }
-    | SignatureParameters::ECDSA { ref hash } = sig_params
+    | SignatureParameters::ECDSA { ref hash }
+    | SignatureParameters::EdDSA { ref hash } = sig_params
     {
         if *hash != HashType::None && *hash != hash_type {
             warnings.push(SmimeError::DigestAlgorithmWarning {
