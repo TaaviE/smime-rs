@@ -88,15 +88,17 @@ struct DecryptArgs {
     passin: String,
 
     /// Password for CMS password-based decryption (PasswordRecipientInfo)
+    #[cfg(feature = "decrypt-pwri")]
     #[arg(long, value_name = "PASSWORD")]
     password: Option<String>,
 
     /// Pre-shared key for KEKRecipientInfo: hex string or path to .bin file
+    #[cfg(feature = "decrypt-kek")]
     #[arg(long, value_name = "HEX_OR_FILE")]
     key: Option<String>,
 }
 
-#[cfg(feature = "decrypt")]
+#[cfg(feature = "decrypt-kek")]
 fn parse_key_arg(arg: &str) -> Result<Vec<u8>, String> {
     if let Ok(bytes) = hex::decode(arg) {
         return Ok(bytes);
@@ -169,7 +171,7 @@ fn run(cli: Cli) -> Result<smime::types::SmimeValidationResult, String> {
 
             let key_der = match args.inkey.extension().and_then(|e| e.to_str()) {
                 Some("p12" | "pfx") => ::smime::pkcs12_utils::extract_private_key_from_p12(&key_bytes, &args.passin)
-                    .map_err(|e| SmimeError::PrivateKeyParseFailed { err: e.to_string() }.localize_en_uk())?,
+                    .map_err(|e| SmimeError::PrivateKeyParseFailed { err: e.into_message() }.localize_en_uk())?,
                 _ => pem::parse(&key_bytes)
                     .map_err(|e| SmimeError::PrivateKeyParseFailed { err: e.to_string() }.localize_en_uk())?
                     .into_contents(),
@@ -180,11 +182,14 @@ fn run(cli: Cli) -> Result<smime::types::SmimeValidationResult, String> {
                 Err(_) => cert_bytes, // assume raw DER
             };
 
+            #[cfg(feature = "decrypt-kek")]
             let kek_bytes = args.key.as_deref().map(parse_key_arg).transpose()?;
             let keys = smime::decrypt::DecryptionKeys {
                 private_key_der: &key_der,
                 recipient_cert_der: &cert_der,
+                #[cfg(feature = "decrypt-pwri")]
                 password: args.password.as_deref(),
+                #[cfg(feature = "decrypt-kek")]
                 kek: kek_bytes.as_deref(),
             };
             let result = decrypt_and_verify_smime_from_eml_detailed(eml_str, trust, &keys);

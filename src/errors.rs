@@ -109,6 +109,7 @@ pub enum SmimeError {
     Pkcs12PasswordRequired,
     Pkcs12WrongPassword,
     Pkcs12NoCertificate,
+    Pkcs12NoPrivateKey,
     Pkcs12Parse {
         err: String,
     },
@@ -204,6 +205,7 @@ impl SmimeError {
             SmimeError::Pkcs12PasswordRequired => "err-pkcs12-password-required",
             SmimeError::Pkcs12WrongPassword => "err-pkcs12-wrong-password",
             SmimeError::Pkcs12NoCertificate => "err-pkcs12-no-certificate",
+            SmimeError::Pkcs12NoPrivateKey => "err-pkcs12-no-private-key",
             SmimeError::Pkcs12Parse { .. } => "err-pkcs12-parse",
             SmimeError::Raw(_) => "raw",
             // Warnings
@@ -294,6 +296,7 @@ impl SmimeError {
             | SmimeError::Pkcs12PasswordRequired
             | SmimeError::Pkcs12WrongPassword
             | SmimeError::Pkcs12NoCertificate
+            | SmimeError::Pkcs12NoPrivateKey
             | SmimeError::Raw(_) => {}
             // Warnings
             SmimeError::CmsVersionMismatch { structure, expected, actual, .. } => {

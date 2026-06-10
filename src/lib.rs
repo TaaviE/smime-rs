@@ -134,6 +134,26 @@ pub fn validate_cert_key(cert_pem: &str) -> Result<(), JsError> {
     encrypt::validate_cert_key(cert_pem).map_err(|e| JsError::new(&e.localize_en_uk()))
 }
 
+/// Build a JS `Error` carrying the localized message and the error's `id`.
+#[cfg(feature = "pkcs12")]
+fn smime_error_to_js(err: SmimeError) -> JsValue {
+    let js = js_sys::Error::new(&err.localize_en_uk());
+    js_sys::Reflect::set(&js, &"id".into(), &err.identifier().into()).unwrap();
+    js.into()
+}
+
+#[cfg(feature = "pkcs12")]
+fn p12_error_to_js(e: pkcs12_utils::P12Error, password: Option<&str>) -> JsValue {
+    use pkcs12_utils::P12Error;
+    smime_error_to_js(match e {
+        P12Error::WrongPassword(_) if password.is_none() => SmimeError::Pkcs12PasswordRequired,
+        P12Error::WrongPassword(_) => SmimeError::Pkcs12WrongPassword,
+        P12Error::NoLeafCertificate => SmimeError::Pkcs12NoCertificate,
+        P12Error::NoPrivateKey => SmimeError::Pkcs12NoPrivateKey,
+        P12Error::Other(err) => SmimeError::Pkcs12Parse { err },
+    })
+}
+
 /// Extract the first subscriber (non-CA) certificate from a PKCS#12 (.p12/.pfx) bundle as PEM.
 /// Throws an `Error` whose `id` property is one of `err-pkcs12-password-required`,
 /// `err-pkcs12-wrong-password`, `err-pkcs12-no-certificate` or `err-pkcs12-parse`.
@@ -141,21 +161,56 @@ pub fn validate_cert_key(cert_pem: &str) -> Result<(), JsError> {
 #[wasm_bindgen]
 pub fn extract_certificate_from_p12(p12: &[u8], password: Option<String>) -> Result<String, JsValue> {
     set_panic_hook();
-    match pkcs12_utils::extract_leaf_certificate_from_p12(p12, password.as_deref().unwrap_or("")) {
-        Ok(der) => Ok(pem::encode(&Pem::new("CERTIFICATE", der)).replace("\r\n", "\n")),
-        Err(e) => {
-            use pkcs12_utils::P12Error;
-            let err = match e {
-                P12Error::WrongPassword(_) if password.is_none() => SmimeError::Pkcs12PasswordRequired,
-                P12Error::WrongPassword(_) => SmimeError::Pkcs12WrongPassword,
-                P12Error::NoLeafCertificate => SmimeError::Pkcs12NoCertificate,
-                P12Error::Other(err) => SmimeError::Pkcs12Parse { err },
-            };
-            let js = js_sys::Error::new(&err.localize_en_uk());
-            js_sys::Reflect::set(&js, &"id".into(), &err.identifier().into()).unwrap();
-            Err(js.into())
+    pkcs12_utils::extract_leaf_certificate_from_p12(p12, password.as_deref().unwrap_or(""))
+        .map(|der| pem::encode(&Pem::new("CERTIFICATE", der)).replace("\r\n", "\n"))
+        .map_err(|e| p12_error_to_js(e, password.as_deref()))
+}
+
+/// Extract the private key from a PKCS#12 (.p12/.pfx) bundle as PKCS#8 PEM.
+/// Throws an `Error` whose `id` property is one of `err-pkcs12-password-required`,
+/// `err-pkcs12-wrong-password`, `err-pkcs12-no-private-key` or `err-pkcs12-parse`.
+#[cfg(feature = "pkcs12")]
+#[wasm_bindgen]
+pub fn extract_private_key_from_p12(p12: &[u8], password: Option<String>) -> Result<String, JsValue> {
+    set_panic_hook();
+    pkcs12_utils::extract_private_key_from_p12(p12, password.as_deref().unwrap_or(""))
+        .map(|der| pem::encode(&Pem::new("PRIVATE KEY", der)).replace("\r\n", "\n"))
+        .map_err(|e| p12_error_to_js(e, password.as_deref()))
+}
+
+/// Decrypt an encrypted S/MIME message with the given PKCS#8 private key PEM and
+/// recipient certificate PEM, then verify any enclosed signature.
+/// Throws on unparseable PEM input; decryption and verification failures are
+/// reported in the result's `failures`.
+#[cfg(feature = "decrypt")]
+#[wasm_bindgen]
+pub fn decrypt_and_verify_smime_from_eml(
+    eml_text: js_sys::JsString,
+    private_key_pem: &str,
+    recipient_cert_pem: &str,
+) -> Result<JsSmimeValidationResult, JsValue> {
+    set_panic_hook();
+
+    let key_der = pem::parse(private_key_pem)
+        .map_err(|e| smime_error_to_js(SmimeError::PrivateKeyParseFailed { err: e.to_string() }))?
+        .into_contents();
+    let cert_der = pem::parse(recipient_cert_pem)
+        .map_err(|e| smime_error_to_js(SmimeError::DecryptionFailed { err: format!("recipient certificate PEM: {}", e) }))?
+        .into_contents();
+    let keys = decrypt::DecryptionKeys { private_key_der: &key_der, recipient_cert_der: &cert_der, ..Default::default() };
+
+    let result = decrypt_and_verify_smime_from_eml_detailed(eml_text.as_string().unwrap(), vec![TrustStore::Builtin].into(), &keys);
+
+    for failure in &result.failures {
+        console_log!("{}", failure.localize_en_uk());
+    }
+    for signer in &result.signers {
+        for note in &signer.validation_details.other_notes {
+            console_log!("{}", note.localize_en_uk());
         }
     }
+
+    Ok(serde_wasm_bindgen::to_value(&result).unwrap().unchecked_into())
 }
 
 fn asn1_time_to_chrono(time: &Time) -> Option<DateTime<Utc>> {
@@ -1526,5 +1581,39 @@ mod wasm_tests {
         let result = verify_smime_from_eml_detailed(eml, vec![TrustStore::Builtin].into());
         assert_eq!(result.signing_system, SigningSystem::Other);
         assert!(result.signers.is_empty());
+    }
+
+    #[cfg(feature = "decrypt")]
+    #[wasm_bindgen_test]
+    fn wasm_decrypt_rsa_aes256() {
+        let key_der = pem::parse(include_bytes!("../tests/keys/test_rsa.key")).unwrap().into_contents();
+        let cert_der = pem::parse(include_bytes!("../tests/keys/test_rsa.pem")).unwrap().into_contents();
+        let eml = include_str!("../tests/general/test_encrypted_rsa_aes256.eml").to_string();
+        let keys = crate::decrypt::DecryptionKeys { private_key_der: &key_der, recipient_cert_der: &cert_der, ..Default::default() };
+        let result = crate::decrypt_and_verify_smime_from_eml_detailed(eml, vec![TrustStore::Debug].into(), &keys);
+        assert!(result.encryption_info.is_some(), "No encryption_info; failures: {:?}", result.failures);
+        let content = result.signed_content.expect("no decrypted content");
+        assert!(std::str::from_utf8(&content).unwrap().contains("OpenSSL-generated test fixture"));
+    }
+
+    #[cfg(feature = "decrypt")]
+    #[wasm_bindgen_test]
+    fn wasm_decrypt_rsa_gcm256() {
+        let key_der = pem::parse(include_bytes!("../tests/keys/test_rsa.key")).unwrap().into_contents();
+        let cert_der = pem::parse(include_bytes!("../tests/keys/test_rsa.pem")).unwrap().into_contents();
+        let eml = include_str!("../tests/general/test_encrypted_gcm256.eml").to_string();
+        let keys = crate::decrypt::DecryptionKeys { private_key_der: &key_der, recipient_cert_der: &cert_der, ..Default::default() };
+        let result = crate::decrypt_and_verify_smime_from_eml_detailed(eml, vec![TrustStore::Debug].into(), &keys);
+        assert!(result.encryption_info.is_some(), "No encryption_info; failures: {:?}", result.failures);
+        let content = result.signed_content.expect("no decrypted content");
+        assert!(std::str::from_utf8(&content).unwrap().contains("OpenSSL-generated test fixture"));
+    }
+
+    #[cfg(feature = "pkcs12")]
+    #[wasm_bindgen_test]
+    fn wasm_extract_private_key_from_p12() {
+        let pem = crate::extract_private_key_from_p12(include_bytes!("../tests/keys/test_rsa_sha1_aes128.p12"), Some("zone.eu".into()))
+            .expect("extract key");
+        assert!(pem.starts_with("-----BEGIN PRIVATE KEY-----"));
     }
 }

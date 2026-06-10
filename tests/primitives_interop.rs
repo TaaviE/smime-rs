@@ -8,14 +8,15 @@ use smime::pkcs12_utils::{P12Error, extract_leaf_certificate_from_p12};
 fn assert_extracts_key(path: &str, password: &str) {
     let p12 = std::fs::read(path).unwrap_or_else(|_| panic!("Failed to read {}", path));
     let key_der = smime::pkcs12_utils::extract_private_key_from_p12(&p12, password)
-        .unwrap_or_else(|e| panic!("Failed to extract key from {}: {}", path, e));
+        .unwrap_or_else(|e| panic!("Failed to extract key from {}: {}", path, e.into_message()));
     assert_eq!(key_der[0], 0x30, "{}: not a valid PKCS#8 key", path);
     assert!(key_der.len() > 100, "{}: key too short", path);
 }
 
 fn assert_extract_fails(path: &str, password: &str, expected_msg: &str) {
     let p12 = std::fs::read(path).unwrap_or_else(|_| panic!("Failed to read {}", path));
-    let err = smime::pkcs12_utils::extract_private_key_from_p12(&p12, password).expect_err(&format!("{}: expected failure", path));
+    let err =
+        smime::pkcs12_utils::extract_private_key_from_p12(&p12, password).expect_err(&format!("{}: expected failure", path)).into_message();
     assert!(err.contains(expected_msg), "{}: expected '{}', got: {}", path, expected_msg, err);
 }
 

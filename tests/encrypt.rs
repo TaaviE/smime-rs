@@ -1,4 +1,4 @@
-#![cfg(feature = "decrypt")]
+#![cfg(all(feature = "encrypt", feature = "decrypt"))]
 
 //! Round-trip tests: encrypt with smime::encrypt, then decrypt with smime::decrypt.
 

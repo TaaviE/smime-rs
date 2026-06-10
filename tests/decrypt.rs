@@ -128,6 +128,7 @@ fn test_oaep_non_mgf1_mask_gen_rejected() {
 }
 
 #[test]
+#[cfg(feature = "encrypt")]
 fn test_oaep_mgf1_sha1_with_sha256_hash_decrypts() {
     use rsa::pkcs8::DecodePrivateKey as _;
     use smime::cryptography_x509::common::{
@@ -467,6 +468,7 @@ fn test_decrypt_multi_type_all_with_x25519() {
 }
 
 #[test]
+#[cfg(feature = "decrypt-kek")]
 fn test_decrypt_multi_type_all_with_kek() {
     let kek = hex::decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f").unwrap();
     let eml = fs::read_to_string("tests/general/test_encrypted_multi_type_all.eml").expect("read");
@@ -480,6 +482,7 @@ fn test_decrypt_multi_type_all_with_kek() {
 }
 
 #[test]
+#[cfg(feature = "decrypt-pwri")]
 fn test_decrypt_multi_type_all_with_password() {
     let eml = fs::read_to_string("tests/general/test_encrypted_multi_type_all.eml").expect("read");
     let result = smime::decrypt_and_verify_smime_from_eml_detailed(
@@ -523,6 +526,7 @@ fn test_decrypt_multi_type_rsa_pwri_with_rsa() {
 }
 
 #[test]
+#[cfg(feature = "decrypt-pwri")]
 fn test_decrypt_multi_type_rsa_pwri_with_password() {
     let eml = fs::read_to_string("tests/general/test_encrypted_multi_type_rsa_pwri.eml").expect("read");
     let result = smime::decrypt_and_verify_smime_from_eml_detailed(

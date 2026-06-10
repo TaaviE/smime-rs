@@ -20,8 +20,10 @@ pub struct DecryptionKeys<'a> {
     /// DER-encoded recipient certificate for recipient matching
     pub recipient_cert_der: &'a [u8],
     /// Password for PasswordRecipientInfo (RFC 3211)
+    #[cfg(feature = "decrypt-pwri")]
     pub password: Option<&'a str>,
     /// Pre-shared symmetric key for KEKRecipientInfo (RFC 5652 §6.2.3)
+    #[cfg(feature = "decrypt-kek")]
     pub kek: Option<&'a [u8]>,
 }
 
@@ -156,7 +158,9 @@ fn recover_cek<'a>(
                 decrypt_ktri_cek(keys.private_key_der, &ktri)
             }
             RecipientInfo::KeyAgreeRecipientInfo(kari) => decrypt_kari_cek(keys.private_key_der, &kari, c.unwrap()),
+            #[cfg(feature = "decrypt-pwri")]
             RecipientInfo::PasswordRecipientInfo(pwri) => decrypt_pwri_cek(keys.password, &pwri),
+            #[cfg(feature = "decrypt-kek")]
             RecipientInfo::KEKRecipientInfo(kekri) => decrypt_kekri_cek(keys.kek, &kekri),
             _ => continue,
         };
@@ -418,6 +422,7 @@ fn extract_x25519_private_key(pkcs8_private_key: &[u8]) -> Result<[u8; 32], Smim
 
 /// Decrypt the CEK via password-based key management (PWRI).
 /// Per RFC 3211 (password-based key wrapping) and RFC 8018 (PBKDF2).
+#[cfg(feature = "decrypt-pwri")]
 pub fn decrypt_pwri_cek(
     password: Option<&str>,
     pwri: &crate::cryptography_x509::pkcs7::PasswordRecipientInfo,
@@ -507,6 +512,7 @@ pub fn decrypt_pwri_cek(
 }
 
 /// RFC 3211 §2.3.2: unwrap a CEK using CBC double-decrypt.
+#[cfg(feature = "decrypt-pwri")]
 fn pwri_unwrap_cek<C>(kek: &[u8], iv: &[u8], ct: &[u8]) -> Result<Vec<u8>, SmimeError>
 where
     C: cbc::cipher::BlockCipherDecrypt + cbc::cipher::KeyInit,
@@ -543,6 +549,7 @@ where
 }
 
 /// Extract the inner AlgorithmIdentifier from PWRI-KEK keyEncryptionAlgorithm parameters.
+#[cfg(feature = "decrypt-pwri")]
 fn extract_pwri_inner_algorithm<'a>(
     kea: &'a crate::cryptography_x509::common::AlgorithmIdentifier<'a>,
 ) -> Result<crate::cryptography_x509::common::AlgorithmIdentifier<'a>, SmimeError> {
@@ -555,6 +562,7 @@ fn extract_pwri_inner_algorithm<'a>(
 
 /// Decrypt the CEK via pre-shared symmetric key (KEKRI).
 /// Per RFC 5652 §6.2.3.
+#[cfg(feature = "decrypt-kek")]
 fn decrypt_kekri_cek(
     kek: Option<&[u8]>,
     kekri: &crate::cryptography_x509::pkcs7::KEKRecipientInfo,

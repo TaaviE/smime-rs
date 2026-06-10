@@ -12,6 +12,7 @@ use crate::cryptography_x509::pkcs12::{CERT_BAG_OID, KEY_BAG_OID, MacData, Pfx, 
 pub enum P12Error {
     WrongPassword(String),
     NoLeafCertificate,
+    NoPrivateKey,
     Other(String),
 }
 
@@ -20,6 +21,7 @@ impl P12Error {
         match self {
             P12Error::WrongPassword(msg) | P12Error::Other(msg) => msg,
             P12Error::NoLeafCertificate => "No end-entity certificate found in PKCS#12".into(),
+            P12Error::NoPrivateKey => "No private key found in PKCS#12".into(),
         }
     }
 }
@@ -110,13 +112,13 @@ fn open_safe_contents(data: &[u8], password: &str) -> Result<Vec<Vec<u8>>, P12Er
 }
 
 /// Extract the PKCS#8 private key DER from a PKCS#12 (.p12/.pfx) file.
-pub fn extract_private_key_from_p12(data: &[u8], password: &str) -> Result<Vec<u8>, String> {
-    for contents in open_safe_contents(data, password).map_err(P12Error::into_message)? {
-        if let Some(key) = find_key_in_safe_contents(&contents, password).map_err(P12Error::into_message)? {
+pub fn extract_private_key_from_p12(data: &[u8], password: &str) -> Result<Vec<u8>, P12Error> {
+    for contents in open_safe_contents(data, password)? {
+        if let Some(key) = find_key_in_safe_contents(&contents, password)? {
             return Ok(key);
         }
     }
-    Err("No private key found in PKCS#12".into())
+    Err(P12Error::NoPrivateKey)
 }
 
 /// Extract the first end-entity (non-CA) certificate DER from a PKCS#12 (.p12/.pfx) file.

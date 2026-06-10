@@ -136,7 +136,7 @@ fn aes_256_cbc_nist_vector() {
     assert_eq!(decrypt_aes_cbc(&key, 32, &iv, &ciphertext).unwrap(), expected_plaintext);
 }
 
-#[cfg(feature = "decrypt-3des")]
+#[cfg(all(feature = "decrypt-3des", feature = "decrypt-pwri"))]
 #[test]
 fn pwri_3des_rfc3211_vector2() {
     // RFC 3211 §4 Test Vector 2: 3DES PWRI key wrap with PBKDF2 (HMAC-SHA1)
@@ -178,6 +178,7 @@ fn pwri_3des_rfc3211_vector2() {
 
 // RFC 3211 wrap/unwrap roundtrip using AES-256-CBC.
 // Wraps with raw CBC (matching OpenSSL cms_pwri.c:295-296), unwraps via decrypt_pwri_cek.
+#[cfg(feature = "decrypt-pwri")]
 #[test]
 fn rfc3211_aes256_wrap_unwrap_roundtrip() {
     use smime::cryptography_x509::common::*;

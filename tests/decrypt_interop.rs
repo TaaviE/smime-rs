@@ -527,6 +527,7 @@ fn test_nested_signed_encrypted() {
 }
 
 #[test]
+#[cfg(feature = "decrypt-pwri")]
 fn test_decrypt_pwri() {
     let eml = fs::read_to_string("tests/general/test_encrypted_pwri.eml").expect("read");
     let result = smime::decrypt_and_verify_smime_from_eml_detailed(
@@ -539,6 +540,7 @@ fn test_decrypt_pwri() {
 }
 
 #[test]
+#[cfg(feature = "decrypt-pwri")]
 fn test_decrypt_pwri_wrong_password() {
     let eml = fs::read_to_string("tests/general/test_encrypted_pwri.eml").expect("read");
     let result = smime::decrypt_and_verify_smime_from_eml_detailed(
@@ -551,6 +553,7 @@ fn test_decrypt_pwri_wrong_password() {
 }
 
 #[test]
+#[cfg(feature = "decrypt-pwri")]
 fn test_decrypt_pwri_no_password() {
     let eml = fs::read_to_string("tests/general/test_encrypted_pwri.eml").expect("read");
     let result =
@@ -664,6 +667,7 @@ fn test_decrypt_ecdh_wrap192() {
 }
 
 #[test]
+#[cfg(feature = "decrypt-kek")]
 fn test_decrypt_kekri() {
     let kek = hex::decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f").unwrap();
     let eml = fs::read_to_string("tests/general/test_encrypted_kekri.eml").expect("read");

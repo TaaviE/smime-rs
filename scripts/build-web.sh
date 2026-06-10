@@ -13,7 +13,7 @@ cp pkg/.gitignore "$saved/"
 rm -f pkg/package.json
 
 wasm-pack build --release --scope zone-eu --out-dir pkg \
-  -- --no-default-features --features "console_error_panic_hook,pkcs12"
+  -- --no-default-features --features "console_error_panic_hook,decrypt"
 
 cp -r src/locales pkg/
 
