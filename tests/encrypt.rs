@@ -85,6 +85,27 @@ fn multi_recipient_rsa_and_ec() {
 }
 
 #[test]
+fn version_reflects_built_recipient_infos() {
+    // Ed25519 is skipped, leaving only a v0 KTRI → version 0 per RFC 5652 §6.1.
+    let certs = vec![fs::read_to_string("tests/keys/test_rsa.pem").unwrap(), fs::read_to_string("tests/keys/test_ed25519.pem").unwrap()];
+    let der = encrypt(&certs, b"x", ContentCipher::Aes256Cbc, false).unwrap().unwrap();
+    let ci: ContentInfo = asn1::parse_single(&der).unwrap();
+    match ci.content {
+        Content::EnvelopedData(e) => assert_eq!(e.into_inner().version, 0),
+        _ => panic!("expected EnvelopedData"),
+    }
+
+    // A KARI recipient still forces version 2.
+    let certs = vec![fs::read_to_string("tests/keys/test_rsa.pem").unwrap(), fs::read_to_string("tests/keys/test_p256.pem").unwrap()];
+    let der = encrypt(&certs, b"x", ContentCipher::Aes256Cbc, false).unwrap().unwrap();
+    let ci: ContentInfo = asn1::parse_single(&der).unwrap();
+    match ci.content {
+        Content::EnvelopedData(e) => assert_eq!(e.into_inner().version, 2),
+        _ => panic!("expected EnvelopedData"),
+    }
+}
+
+#[test]
 fn no_valid_recipients_returns_none() {
     // Ed25519 cert is not a supported encryption recipient → None.
     let certs = vec![fs::read_to_string("tests/keys/test_ed25519.pem").unwrap()];

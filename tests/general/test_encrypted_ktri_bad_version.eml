@@ -1,0 +1,19 @@
+From: =?UTF-8?B?S2FsbGUgS3LDvHB0aWph?= <kalle@naide.ee>
+To: =?UTF-8?B?VGlpdSBUaWhhbmU=?= <tiiu@naide.ee>
+Subject: Test KTRI bad version
+Date: Wed, 10 Jun 2026 08:16:14 +0000
+MIME-Version: 1.0
+Content-Type: application/pkcs7-mime;
+ smime-type=enveloped-data; name="smime.p7m"
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIIB7wYJKoZIhvcNAQcDoIIB4DCCAdwCAQIxggFnMIIBYwIBAjBLMDMxFzAVBgNVBAoMDlpvbmUg
+TWVkaWEgT8OcMRgwFgYDVQQDDA9LYWxsZSBLcsO8cHRpamECFDO4+PrspGFEXLelnohpOnX/etaN
+MA0GCSqGSIb3DQEBAQUABIIBAGuGRoNHbWa28T5M3v3rSM2t0nWBALFsY3j9WDGA0/Cuy9TPFQ2U
+qAoVg03btLWt6j9rroaspRG9Yq5DUHuGJV9su/UujKpvplHiT7M3eTwvXmVlK2zuxve6Wf+u3E/i
+aZfRrjpnLyVISd3IgTvXPgmvY/Zc8xb20nrdJUPPHKtfPHRqPEMnAPbOixHUQgaUEu0qYh2X6gzA
+laoKlWJIQN3wn6rKd+oUR6WYBRVuq1/oQxPAjxhsLYzKehbH3A329ssoy9rTnboGJ6JKqStFNL3d
+kkjptaDmKAGU0hMnPuoP2R8l9NxkWE/YksjYTpK4I/VFW9A/cgl6rqTq8XxC8VEwbAYJKoZIhvcN
+AQcBMB0GCWCGSAFlAwQBKgQQ51Y2qn+ElMYiSgpj8vwHPoBAZ3vOcdv555wV57xzap/B+H1urRlI
+PG2gQKqInWObcXLXyEEtGvGto4aFYJ8WZO71S8zxEc0HarVk0SK6KgQrEg==

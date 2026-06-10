@@ -80,6 +80,11 @@ enum SignCommands {
         #[arg(long, default_value = "tests/general/no-auth-attrs.eml")]
         output: PathBuf,
     },
+    /// Signed message with ESS signingCertificate + signingCertificateV2 attributes
+    EssSigningCert {
+        #[arg(long, default_value = "tests/general/ess-signing-cert.eml")]
+        output: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -453,6 +458,119 @@ fn generate_no_auth_attrs(output: &PathBuf) {
     write_fixture_eml(output, &cms_der, "Test No Auth Attrs", "signed-data");
 }
 
+// RFC 5035: signingCertificate (SHA-1) and signingCertificateV2 (SHA-256, hashAlgorithm
+// omitted as DEFAULT) over the signer certificate. ESS is unsupported, so verification
+// must fail this otherwise fully valid message.
+fn generate_ess_signing_cert(output: &PathBuf) {
+    use rsa::pkcs8::DecodePrivateKey;
+    use sha1::Digest;
+    use signature::SignatureEncoding;
+
+    let cert_der = load_cert_der_for_fixtures("tests/keys/test_rsa.pem");
+    let cert: smime::cryptography_x509::certificate::Certificate<'_> = asn1::parse_single(&cert_der).unwrap();
+    let issuer_der = asn1::write_single(&cert.tbs_cert.issuer).unwrap();
+    let serial_bytes = cert.tbs_cert.serial.as_bytes().to_vec();
+
+    let key_pem = fs::read_to_string("tests/keys/test_rsa.key").expect("read RSA key");
+    let rsa_sk = rsa::RsaPrivateKey::from_pkcs8_pem(&key_pem).expect("parse RSA key");
+
+    let content: &[u8] = b"Content-Type: text/plain\r\n\r\nESS signingCertificate\r\n";
+    let content_hash = sha2::Sha256::digest(content).to_vec();
+
+    let sig_alg = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::RsaWithSha256(Some(())) };
+    let digest_alg = AlgorithmIdentifier { oid: asn1::DefinedByMarker::marker(), params: AlgorithmParameters::Sha256(Some(())) };
+
+    let v1_hash = sha1::Sha1::digest(&cert_der).to_vec();
+    let v2_hash = sha2::Sha256::digest(&cert_der).to_vec();
+
+    // SigningCertificate ::= SEQUENCE { certs SEQUENCE OF ESSCertID { certHash } }
+    let ess_v1_der = asn1::write_single(&asn1::SequenceWriter::new(&|w| {
+        w.write_element(&asn1::SequenceWriter::new(&|w| {
+            w.write_element(&asn1::SequenceWriter::new(&|w| w.write_element(&v1_hash.as_slice())))
+        }))
+    }))
+    .unwrap();
+    let ess_v2_der = asn1::write_single(&asn1::SequenceWriter::new(&|w| {
+        w.write_element(&asn1::SequenceWriter::new(&|w| {
+            w.write_element(&asn1::SequenceWriter::new(&|w| w.write_element(&v2_hash.as_slice())))
+        }))
+    }))
+    .unwrap();
+
+    let data_oid_der = asn1::write_single(&PKCS7_DATA_OID).unwrap();
+    let data_oid_tlv: asn1::Tlv<'_> = asn1::parse_single(&data_oid_der).unwrap();
+    let ess_v1_tlv: asn1::Tlv<'_> = asn1::parse_single(&ess_v1_der).unwrap();
+    let ess_v2_tlv: asn1::Tlv<'_> = asn1::parse_single(&ess_v2_der).unwrap();
+    let digest_octet_tag = <&[u8] as asn1::SimpleAsn1Readable>::TAG;
+
+    let attrs = vec![
+        csr::Attribute {
+            type_id: oid::CONTENT_TYPE_OID,
+            values: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new([RawTlv::new(data_oid_tlv.tag(), data_oid_tlv.data())])),
+        },
+        csr::Attribute {
+            type_id: oid::MESSAGE_DIGEST_OID,
+            values: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new([RawTlv::new(digest_octet_tag, &content_hash)])),
+        },
+        csr::Attribute {
+            type_id: oid::SIGNING_CERTIFICATE_OID,
+            values: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new([RawTlv::new(ess_v1_tlv.tag(), ess_v1_tlv.data())])),
+        },
+        csr::Attribute {
+            type_id: oid::SIGNING_CERTIFICATE_V2_OID,
+            values: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new([RawTlv::new(ess_v2_tlv.tag(), ess_v2_tlv.data())])),
+        },
+    ];
+    let attrs_set_der = asn1::write_single(&asn1::SetOfWriter::new(attrs)).unwrap();
+
+    let signer = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(rsa_sk);
+    let attrs_signature = {
+        use signature::Signer;
+        signer.sign(&attrs_set_der).to_vec()
+    };
+
+    let parsed_attrs: asn1::SetOf<'_, csr::Attribute<'_>> = asn1::parse_single(&attrs_set_der).unwrap();
+    let parsed_cert: smime::cryptography_x509::certificate::Certificate<'_> = asn1::parse_single(&cert_der).unwrap();
+    let issuer_name: name::NameReadable<'_> = asn1::parse_single(&issuer_der).unwrap();
+
+    let signer_info = SignerInfo {
+        version: 1,
+        issuer_and_serial_number: SignerIdentifier::IssuerAndSerialNumber(IssuerAndSerialNumber {
+            issuer: Asn1ReadableOrWritable::new_read(issuer_name),
+            serial_number: asn1::BigInt::new(&serial_bytes).unwrap(),
+        }),
+        digest_algorithm: digest_alg.clone(),
+        authenticated_attributes: Some(Asn1ReadableOrWritable::new_read(parsed_attrs)),
+        digest_encryption_algorithm: sig_alg.clone(),
+        encrypted_digest: &attrs_signature,
+        unauthenticated_attributes: None,
+    };
+
+    let digest_algs = [digest_alg];
+    let signer_infos = [signer_info];
+
+    let signed_data = SignedData {
+        version: 1,
+        digest_algorithms: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(&digest_algs)),
+        content_info: ContentInfo {
+            content_type: asn1::DefinedByMarker::marker(),
+            content: Content::Data(Some(asn1::Explicit::new(content))),
+        },
+        certificates: Some(Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(vec![CertificateChoices::Certificate(parsed_cert)]))),
+        crls: None,
+        signer_infos: Asn1ReadableOrWritable::new_write(asn1::SetOfWriter::new(&signer_infos)),
+    };
+
+    let content_info = ContentInfo {
+        content_type: asn1::DefinedByMarker::marker(),
+        content: Content::SignedData(asn1::Explicit::new(Box::new(signed_data))),
+    };
+
+    let cms_der = asn1::write_single(&content_info).unwrap();
+    verify_signed_cms(&cms_der);
+    write_fixture_eml(output, &cms_der, "Test ESS Signing Cert", "signed-data");
+}
+
 fn generate_ed25519(output: &PathBuf) {
     use ed25519_dalek::Signer;
     use ed25519_dalek::pkcs8::DecodePrivateKey;
@@ -773,6 +891,7 @@ fn run_all() {
     generate_ml_dsa_87_shake(&PathBuf::from("tests/pq/ml-dsa-87.eml"));
     generate_no_message_digest(&PathBuf::from("tests/general/no-message-digest-attr.eml"));
     generate_no_auth_attrs(&PathBuf::from("tests/general/no-auth-attrs.eml"));
+    generate_ess_signing_cert(&PathBuf::from("tests/general/ess-signing-cert.eml"));
     gen_openssl_fixtures();
     gen_additional_fixtures();
     gen_multi_recipient_fixtures();
@@ -790,6 +909,7 @@ fn main() {
             SignCommands::MlDsa87Shake { output } => generate_ml_dsa_87_shake(output),
             SignCommands::NoMessageDigest { output } => generate_no_message_digest(output),
             SignCommands::NoAuthAttrs { output } => generate_no_auth_attrs(output),
+            SignCommands::EssSigningCert { output } => generate_ess_signing_cert(output),
         },
         Commands::Encrypt { command } => match command {
             EncryptCommands::Openssl => gen_openssl_fixtures(),
@@ -972,27 +1092,28 @@ fn build_kari_p256(cek: &[u8], ec_cert_path: &str) -> (Vec<u8>, Vec<u8>) {
 
     let z = p256::ecdh::diffie_hellman(&eph_sk, recipient_pk.as_affine());
 
+    // RFC 8551 §2.3: key wrap and content-encryption key sizes MUST match (256-bit CEK)
     let wrap_alg_der = asn1::write_single(&AlgorithmIdentifier {
         oid: asn1::DefinedByMarker::marker(),
-        params: AlgorithmParameters::Other(oid::AES128_WRAP.clone(), None),
+        params: AlgorithmParameters::Other(oid::AES256_WRAP.clone(), None),
     })
     .unwrap();
 
     let shared_info = EccCmsSharedInfo {
         key_info: AlgorithmIdentifier {
             oid: asn1::DefinedByMarker::marker(),
-            params: AlgorithmParameters::Other(oid::AES128_WRAP.clone(), None),
+            params: AlgorithmParameters::Other(oid::AES256_WRAP.clone(), None),
         },
         entity_u_info: None,
-        supp_pub_info: &0x00000080u32.to_be_bytes(),
+        supp_pub_info: &0x00000100u32.to_be_bytes(),
     };
     let shared_info_der = asn1::write_single(&shared_info).unwrap();
 
-    let mut kek = vec![0u8; 16];
+    let mut kek = vec![0u8; 32];
     ansi_x963_kdf::derive_key_into::<sha2::Sha256>(z.raw_secret_bytes(), &shared_info_der, &mut kek).unwrap();
 
     let mut wrapped_cek = vec![0u8; cek.len() + 8];
-    aes_kw::KwAes128::new_from_slice(&kek).unwrap().wrap_key(cek, &mut wrapped_cek).unwrap();
+    aes_kw::KwAes256::new_from_slice(&kek).unwrap().wrap_key(cek, &mut wrapped_cek).unwrap();
 
     let ias_der =
         asn1::write_single(&IssuerAndSerialNumber { issuer: cert.tbs_cert.issuer.clone(), serial_number: cert.tbs_cert.serial.clone() })
@@ -1035,27 +1156,28 @@ fn build_kari_x25519(cek: &[u8]) -> Vec<u8> {
     let recipient_pk = x25519_dalek::PublicKey::from(&recipient_sk);
     let z = eph_sk.diffie_hellman(&recipient_pk);
 
+    // RFC 8551 §2.3: key wrap and content-encryption key sizes MUST match (256-bit CEK)
     let wrap_alg_der = asn1::write_single(&AlgorithmIdentifier {
         oid: asn1::DefinedByMarker::marker(),
-        params: AlgorithmParameters::Other(oid::AES128_WRAP.clone(), None),
+        params: AlgorithmParameters::Other(oid::AES256_WRAP.clone(), None),
     })
     .unwrap();
 
     let shared_info = EccCmsSharedInfo {
         key_info: AlgorithmIdentifier {
             oid: asn1::DefinedByMarker::marker(),
-            params: AlgorithmParameters::Other(oid::AES128_WRAP.clone(), None),
+            params: AlgorithmParameters::Other(oid::AES256_WRAP.clone(), None),
         },
         entity_u_info: None,
-        supp_pub_info: &0x00000080u32.to_be_bytes(),
+        supp_pub_info: &0x00000100u32.to_be_bytes(),
     };
     let shared_info_der = asn1::write_single(&shared_info).unwrap();
 
-    let mut kek = vec![0u8; 16];
+    let mut kek = vec![0u8; 32];
     ansi_x963_kdf::derive_key_into::<sha2::Sha256>(z.as_bytes(), &shared_info_der, &mut kek).unwrap();
 
     let mut wrapped_cek = vec![0u8; cek.len() + 8];
-    aes_kw::KwAes128::new_from_slice(&kek).unwrap().wrap_key(cek, &mut wrapped_cek).unwrap();
+    aes_kw::KwAes256::new_from_slice(&kek).unwrap().wrap_key(cek, &mut wrapped_cek).unwrap();
 
     let rek = RecipientEncryptedKey {
         rid: KeyAgreeRecipientIdentifier::RKeyId(RecipientKeyIdentifier {
@@ -1276,6 +1398,31 @@ fn gen_multi_recipient_fixtures() {
 
         write_fixture_eml("tests/general/test_encrypted_multi_type_rsa_pwri.eml", &der, "Test KTRI+PWRI", "enveloped-data");
     }
+
+    // Fixture 3: KTRI with version 2 despite IssuerAndSerialNumber rid (RFC 5652 §6.2.1 requires 0).
+    // Still decryptable; the version mismatch must be recorded, not fatal.
+    {
+        let cek: [u8; 32] = random_bytes();
+        let iv: [u8; 16] = random_bytes();
+        let ciphertext = encrypt_aes_cbc(&cek, &iv, plaintext);
+
+        let (ktri_der, rsa_key_der, rsa_cert_der) = build_ktri(&cek, "tests/keys/test_rsa.key", "tests/keys/test_rsa.pem");
+        let mut ri: RecipientInfo = asn1::parse_single(&ktri_der).unwrap();
+        match &mut ri {
+            RecipientInfo::KeyTransRecipientInfo(ktri) => ktri.version = 2,
+            _ => unreachable!(),
+        }
+        let ktri_der = asn1::write_single(&ri).unwrap();
+
+        // EnvelopedData version is 2 because not all KTRIs are v0 (RFC 5652 §6.1)
+        let der = build_enveloped_data_der(&[ktri_der], &ciphertext, &iv, 2);
+
+        let rsa_keys =
+            smime::decrypt::DecryptionKeys { private_key_der: &rsa_key_der, recipient_cert_der: &rsa_cert_der, ..Default::default() };
+        verify_enveloped_roundtrip(&der, &rsa_keys, plaintext);
+
+        write_fixture_eml("tests/general/test_encrypted_ktri_bad_version.eml", &der, "Test KTRI bad version", "enveloped-data");
+    }
 }
 
 fn openssl_cms_encrypt(plaintext: &[u8], cipher: &str, recip_certs: &[&str], keyopts: &[&str], extra_args: &[&str]) -> Vec<u8> {
@@ -1430,6 +1577,17 @@ fn gen_openssl_fixtures() {
             extra_args: vec![],
             smime_type: "enveloped-data",
             subject: "Test OAEP SHA-1",
+        },
+        // MGF1 hash differs from the OAEP hash (explicitly encoded, not the
+        // omitted mgf1SHA1 DEFAULT); RFC 8017 A.2.1 allows independent choices
+        Fixture {
+            path: "tests/general/test_encrypted_oaep_mgf1_mismatch.eml",
+            cipher: "-aes-256-cbc",
+            certs: vec![rsa_cert],
+            keyopts: vec!["rsa_padding_mode:oaep", "rsa_oaep_md:sha256", "rsa_mgf1_md:sha384"],
+            extra_args: vec![],
+            smime_type: "enveloped-data",
+            subject: "Test OAEP SHA-256 with MGF1 SHA-384",
         },
         Fixture {
             path: "tests/general/test_encrypted_oaep_aes128.eml",

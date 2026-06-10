@@ -114,6 +114,28 @@ fn recover_cek<'a>(
     };
 
     let mut warnings = Vec::new();
+
+    // RFC 5652 §6.2.1-6.2.4: per-RecipientInfo version MUSTs; recorded, not fatal.
+    use crate::cryptography_x509::pkcs7::RecipientIdentifier;
+    for (idx, ri) in recipient_infos.unwrap_read().clone().enumerate() {
+        let (structure, expected, actual) = match &ri {
+            RecipientInfo::KeyTransRecipientInfo(ktri) => {
+                let expected = match ktri.rid {
+                    RecipientIdentifier::IssuerAndSerialNumber(_) => 0,
+                    RecipientIdentifier::SubjectKeyIdentifier(_) => 2,
+                };
+                ("KeyTransRecipientInfo", expected, ktri.version)
+            }
+            RecipientInfo::KeyAgreeRecipientInfo(kari) => ("KeyAgreeRecipientInfo", 3, kari.version),
+            RecipientInfo::KEKRecipientInfo(kekri) => ("KEKRecipientInfo", 4, kekri.version),
+            RecipientInfo::PasswordRecipientInfo(pwri) => ("PasswordRecipientInfo", 0, pwri.version),
+            _ => continue,
+        };
+        if actual != expected {
+            warnings.push(SmimeError::CmsVersionMismatch { structure: structure.into(), expected, actual, idx: Some(idx) });
+        }
+    }
+
     let mut last_err = None;
     let mut cek = None;
     for ri in recipient_infos.unwrap_read().clone() {
@@ -214,6 +236,12 @@ fn decrypt_ktri_cek(private_key_der: &[u8], recipient_info: &KeyTransRecipientIn
                         alg: format!("non-default OAEP pSourceFunc: {}", p_source.oid()),
                     });
                 }
+            }
+            // RFC 3560 §3: MGF1 is the only supported mask generation function.
+            if oaep_params.mask_gen_algorithm.oid != MGF1_OID {
+                return Err(SmimeError::UnsupportedKeyEncryptionAlg {
+                    alg: format!("non-MGF1 OAEP maskGenFunc: {}", oaep_params.mask_gen_algorithm.oid),
+                });
             }
             let mgf_hash_oid = oaep_params.mask_gen_algorithm.params.oid();
             let hash_oid = oaep_params.hash_algorithm.oid();

@@ -236,12 +236,8 @@ pub fn encrypt(certs_pem: &[String], plaintext: &[u8], cipher: ContentCipher, pk
     }
 
     let mut ris_der: Vec<Vec<u8>> = Vec::new();
-    let mut all_ktri = true;
     for der in &cert_ders {
         let cert: Certificate = asn1::parse_single(der).map_err(|e| SmimeError::Raw(format!("invalid certificate: {}", e)))?;
-        if !matches!(cert.tbs_cert.spki.algorithm.params, AlgorithmParameters::RSA(_)) {
-            all_ktri = false;
-        }
         if let Some(ri) = build_recipient_info(&cek, &cert, pkcs1v15)? {
             ris_der.push(ri);
         }
@@ -252,6 +248,7 @@ pub fn encrypt(certs_pem: &[String], plaintext: &[u8], cipher: ContentCipher, pk
     }
 
     let ris: Vec<RecipientInfo> = ris_der.iter().map(|d| asn1::parse_single(d).unwrap()).collect();
+    let all_ktri = ris.iter().all(|ri| matches!(ri, RecipientInfo::KeyTransRecipientInfo(_)));
 
     let der = match cipher {
         ContentCipher::Aes256Cbc => {

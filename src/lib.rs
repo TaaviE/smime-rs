@@ -134,6 +134,30 @@ pub fn validate_cert_key(cert_pem: &str) -> Result<(), JsError> {
     encrypt::validate_cert_key(cert_pem).map_err(|e| JsError::new(&e.localize_en_uk()))
 }
 
+/// Extract the first subscriber (non-CA) certificate from a PKCS#12 (.p12/.pfx) bundle as PEM.
+/// Throws an `Error` whose `id` property is one of `err-pkcs12-password-required`,
+/// `err-pkcs12-wrong-password`, `err-pkcs12-no-certificate` or `err-pkcs12-parse`.
+#[cfg(feature = "pkcs12")]
+#[wasm_bindgen]
+pub fn extract_certificate_from_p12(p12: &[u8], password: Option<String>) -> Result<String, JsValue> {
+    set_panic_hook();
+    match pkcs12_utils::extract_leaf_certificate_from_p12(p12, password.as_deref().unwrap_or("")) {
+        Ok(der) => Ok(pem::encode(&Pem::new("CERTIFICATE", der)).replace("\r\n", "\n")),
+        Err(e) => {
+            use pkcs12_utils::P12Error;
+            let err = match e {
+                P12Error::WrongPassword(_) if password.is_none() => SmimeError::Pkcs12PasswordRequired,
+                P12Error::WrongPassword(_) => SmimeError::Pkcs12WrongPassword,
+                P12Error::NoLeafCertificate => SmimeError::Pkcs12NoCertificate,
+                P12Error::Other(err) => SmimeError::Pkcs12Parse { err },
+            };
+            let js = js_sys::Error::new(&err.localize_en_uk());
+            js_sys::Reflect::set(&js, &"id".into(), &err.identifier().into()).unwrap();
+            Err(js.into())
+        }
+    }
+}
+
 fn asn1_time_to_chrono(time: &Time) -> Option<DateTime<Utc>> {
     let dt = time.as_datetime();
     Utc.with_ymd_and_hms(dt.year() as i32, dt.month() as u32, dt.day() as u32, dt.hour() as u32, dt.minute() as u32, dt.second() as u32)
@@ -901,7 +925,11 @@ fn prepare_signer<'a>(
                 SMIME_CAPABILITIES_OID => {
                     smime_capabilities_count += 1;
                 }
-                SIGNING_CERTIFICATE_OID | SIGNING_CERTIFICATE_V2_OID => {}
+                // RFC 5035 ESS is not supported; per §5.4 an unverified signingCertificate
+                // would have to be checked against the verification certificate, so reject.
+                SIGNING_CERTIFICATE_OID | SIGNING_CERTIFICATE_V2_OID => {
+                    result.failures.push(SmimeError::Raw(format!("unsupported ESS signingCertificate signed attribute for signer: {idx}")));
+                }
                 _ => {}
             }
         }

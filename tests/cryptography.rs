@@ -229,6 +229,20 @@ fn test_no_message_digest_attr() {
 }
 
 #[test]
+fn test_ess_signing_cert_unsupported() {
+    let eml = fs::read_to_string("tests/general/ess-signing-cert.eml").expect("read");
+    let result = verify_smime_from_eml_detailed(eml, vec![TrustStore::Debug].into());
+    // The signature itself verifies, but ESS signingCertificate is unsupported and must fail
+    assert_eq!(result.signers.len(), 1);
+    assert!(result.signers[0].validation_details.checks.signature_matches_signed_data);
+    assert!(
+        result.failures.iter().any(|f| matches!(f, SmimeError::Raw(s) if s.contains("ESS signingCertificate"))),
+        "expected unsupported ESS attribute failure, got: {:?}",
+        result.failures
+    );
+}
+
+#[test]
 fn test_no_auth_attrs() {
     let eml = fs::read_to_string("tests/general/no-auth-attrs.eml").expect("read");
     let result = verify_smime_from_eml_detailed(eml, vec![TrustStore::Debug].into());

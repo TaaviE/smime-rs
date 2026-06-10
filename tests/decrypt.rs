@@ -259,6 +259,38 @@ fn test_decrypt_aes_256_gcm_icvlen12() {
     assert_eq!(result.encryption_info.as_ref().unwrap().key_size, "256-bit");
 }
 
+#[test]
+fn test_recipient_info_version_mismatch_recorded() {
+    let key_der = pem::parse(fs::read("tests/keys/test_rsa.key").expect("read")).expect("pem").into_contents();
+    let cert_der = load_cert_der("tests/keys/test_rsa.key");
+    let eml = fs::read_to_string("tests/general/test_encrypted_ktri_bad_version.eml").expect("read");
+    let result = smime::decrypt_and_verify_smime_from_eml_detailed(
+        eml,
+        vec![TrustStore::Debug].into(),
+        &smime::decrypt::DecryptionKeys { private_key_der: &key_der, recipient_cert_der: &cert_der, ..Default::default() },
+    );
+    assert_decrypted_ok(&result, "Multi-recipient-type test");
+    let has_mismatch = result.failures.iter().any(|f| {
+        matches!(f, SmimeError::CmsVersionMismatch { structure, expected: 0, actual: 2, idx: Some(0) } if structure == "KeyTransRecipientInfo")
+    });
+    assert!(has_mismatch, "expected KeyTransRecipientInfo version mismatch, got: {:?}", result.failures);
+}
+
+#[test]
+fn test_recipient_info_versions_valid_no_mismatch() {
+    let key_der = pem::parse(fs::read("tests/keys/test_rsa.key").expect("read")).expect("pem").into_contents();
+    let cert_der = load_cert_der("tests/keys/test_rsa.key");
+    let eml = fs::read_to_string("tests/general/test_encrypted_multi_type_all.eml").expect("read");
+    let result = smime::decrypt_and_verify_smime_from_eml_detailed(
+        eml,
+        vec![TrustStore::Debug].into(),
+        &smime::decrypt::DecryptionKeys { private_key_der: &key_der, recipient_cert_der: &cert_der, ..Default::default() },
+    );
+    assert_decrypted_ok(&result, "Multi-recipient-type test");
+    let mismatches: Vec<_> = result.failures.iter().filter(|f| matches!(f, SmimeError::CmsVersionMismatch { .. })).collect();
+    assert!(mismatches.is_empty(), "unexpected version mismatches: {:?}", mismatches);
+}
+
 // Multi-recipient-type tests: all 4 RecipientInfo types in one EnvelopedData
 
 #[test]
